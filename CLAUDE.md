@@ -24,6 +24,7 @@ cc-malware-toolkit/
 
 ### 前提条件
 
+- **Windows 10/11**（Linux/macOSは未サポート）
 - [Claude Code](https://claude.com/claude-code) がインストール済み
 - Docker Desktop がインストール・起動済み
 - Go 1.21+ （Go版ツールのビルド用）

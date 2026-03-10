@@ -33,6 +33,7 @@ Reverse engineering & malware analysis toolkit for [Claude Code](https://claude.
 
 ### Prerequisites
 
+- **Windows 10/11** (Linux/macOS is not officially supported)
 - [Claude Code](https://claude.com/claude-code) installed
 - Docker Desktop running
 - Go 1.21+
