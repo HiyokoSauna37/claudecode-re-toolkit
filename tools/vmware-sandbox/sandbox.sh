@@ -1,6 +1,6 @@
 #!/bin/bash
 # VMware Sandbox - Dynamic Malware Analysis Helper
-# Usage: bash tools/vmware-sandbox/sandbox.sh <command> [args]
+# Usage: bash Tools/vmware-sandbox/sandbox.sh <command> [args]
 
 set -e
 export MSYS_NO_PATHCONV=1
@@ -16,12 +16,12 @@ if [ -f "$PROJECT_ROOT/.env" ]; then
         value="${value%$'\r'}"
         [[ -z "$key" || "$key" =~ ^# ]] && continue
         case "$key" in
-            VM_*|VIRUSTOTAL_*|VMRUN_*|QUARANTINE_*|ABUSECH_*) declare "$key=$value" ;;
+            VM_*|VIRUSTOTAL_*|VMRUN_TIMEOUT) declare "$key=$value" ;;
         esac
     done < "$PROJECT_ROOT/.env"
 fi
 
-VMRUN="${VMRUN_PATH:-/c/Program Files (x86)/VMware/VMware Workstation/vmrun.exe}"
+VMRUN="/c/Program Files (x86)/VMware/VMware Workstation/vmrun.exe"
 VMRUN_WRAPPER="$SCRIPT_DIR/vmrun-wrapper/vmrun-wrapper.exe"
 NET_ISOLATE="$SCRIPT_DIR/net_isolate.py"
 VMX_PATH="${VM_VMX_PATH}"
@@ -31,7 +31,7 @@ GP="${VM_GUEST_PASS}"
 GUEST_PROFILE="${VM_GUEST_PROFILE:-C:\\Users\\${GU}}"
 GUEST_ANALYSIS_DIR="${GUEST_PROFILE}\\Desktop\\analysis"
 GUEST_TOOLS_DIR="${GUEST_PROFILE}\\Desktop\\tools"
-SNAPSHOT_CLEAN="${VM_SNAPSHOT:-clean_with_tools}"
+SNAPSHOT_CLEAN="clean_with_tools"
 
 OUTPUT_DIR="$SCRIPT_DIR/output"
 INPUT_DIR="$SCRIPT_DIR/input"
@@ -524,16 +524,30 @@ cmd_analyze() {
     local binary="$1"
     local wait_time="${2:-60}"
     if [ -z "$binary" ]; then
-        err "Usage: sandbox.sh analyze <binary_path> [wait_seconds=60]"
+        err "Usage: sandbox.sh analyze <binary_path|encrypted.enc.gz> [wait_seconds=60]"
         exit 1
     fi
 
     local bname=$(basename "$binary")
+    local is_encrypted=false
+
+    # Detect .enc.gz quarantine files
+    if [[ "$bname" == *.enc.gz ]]; then
+        is_encrypted=true
+        log "Detected .enc.gz quarantine file. Will decrypt inside VM."
+    fi
+
+    # For encrypted files, use the decrypted name for result dir
+    local exe_name="$bname"
+    if $is_encrypted; then
+        exe_name="${bname%.enc.gz}"
+    fi
+
     local timestamp=$(date +%Y%m%d_%H%M%S)
-    local result_dir="$OUTPUT_DIR/${bname}_${timestamp}"
+    local result_dir="$OUTPUT_DIR/${exe_name}_${timestamp}"
     mkdir -p "$result_dir"
 
-    log "=== Dynamic Analysis: $bname ==="
+    log "=== Dynamic Analysis: $exe_name ==="
 
     # Step 1: Revert to snapshot (VM stops after revert)
     log "Step 1: Reverting to clean_with_tools snapshot..."
@@ -556,12 +570,73 @@ cmd_analyze() {
     log "Step 4: Preparing guest..."
     vmrun_t -T ws -gu "$GU" -gp "$GP" createDirectoryInGuest "$VMX_PATH" "$GUEST_ANALYSIS_DIR" 2>/dev/null || true
 
-    # Step 5: Copy malware to guest
+    # Step 5: Copy malware to guest (with .enc.gz auto-decrypt)
     log "Step 5: Copying malware to guest..."
-    local guest_binary="${GUEST_ANALYSIS_DIR}\\${bname}"
+    local guest_binary="${GUEST_ANALYSIS_DIR}\\${exe_name}"
     local win_binary
     win_binary=$(cygpath -w "$binary" 2>/dev/null || echo "$binary")
-    vmrun_t -T ws -gu "$GU" -gp "$GP" copyFileFromHostToGuest "$VMX_PATH" "$win_binary" "$guest_binary"
+    vmrun_t -T ws -gu "$GU" -gp "$GP" copyFileFromHostToGuest "$VMX_PATH" "$win_binary" "${GUEST_ANALYSIS_DIR}\\${bname}"
+
+    if $is_encrypted; then
+        log "Step 5.5: Decrypting .enc.gz inside VM..."
+        # Copy decrypt script to VM
+        local decrypt_ps1="$INPUT_DIR/vm_quarantine_decrypt.ps1"
+        if [ ! -f "$decrypt_ps1" ]; then
+            err "Decrypt script not found: $decrypt_ps1"
+            err "Run: sandbox.sh setup-decrypt to create it"
+            exit 1
+        fi
+        local win_decrypt
+        win_decrypt=$(cygpath -w "$decrypt_ps1" 2>/dev/null || echo "$decrypt_ps1")
+        vmrun_t -T ws -gu "$GU" -gp "$GP" copyFileFromHostToGuest "$VMX_PATH" "$win_decrypt" "${GUEST_ANALYSIS_DIR}\\vm_quarantine_decrypt.ps1"
+
+        # Get quarantine password from .env
+        local q_password=""
+        if [ -f "$SCRIPT_DIR/../../.env" ]; then
+            q_password=$(grep -E '^QUARANTINE_PASSWORD=' "$SCRIPT_DIR/../../.env" | cut -d= -f2- | tr -d '"' | tr -d "'" | tr -d $'\r')
+        fi
+        if [ -z "$q_password" ]; then
+            err "QUARANTINE_PASSWORD not found in .env"
+            exit 1
+        fi
+
+        # Execute decrypt inside VM via run-script approach
+        local tmp_decrypt_runner
+        tmp_decrypt_runner=$(mktemp --suffix=.ps1)
+        cat > "$tmp_decrypt_runner" <<EOPS
+\$ErrorActionPreference = "Stop"
+try {
+    & "${GUEST_ANALYSIS_DIR}\\vm_quarantine_decrypt.ps1" -InputFile "${GUEST_ANALYSIS_DIR}\\${bname}" -OutputFile "${GUEST_ANALYSIS_DIR}\\${exe_name}" -Password "${q_password}"
+    "OK" | Out-File -Encoding UTF8 "${GUEST_ANALYSIS_DIR}\\decrypt_status.txt"
+} catch {
+    "FAIL: \$(\$_.Exception.Message)" | Out-File -Encoding UTF8 "${GUEST_ANALYSIS_DIR}\\decrypt_status.txt"
+}
+EOPS
+        # Copy and run the decrypt runner
+        local win_runner
+        win_runner=$(cygpath -w "$tmp_decrypt_runner" 2>/dev/null || echo "$tmp_decrypt_runner")
+        vmrun_t -T ws -gu "$GU" -gp "$GP" copyFileFromHostToGuest "$VMX_PATH" "$win_runner" "${GUEST_ANALYSIS_DIR}\\run_decrypt_tmp.ps1"
+        vmrun_t -T ws -gu "$GU" -gp "$GP" runProgramInGuest "$VMX_PATH" \
+            "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" \
+            -ExecutionPolicy Bypass -NonInteractive -File "${GUEST_ANALYSIS_DIR}\\run_decrypt_tmp.ps1" 2>/dev/null || true
+        rm -f "$tmp_decrypt_runner"
+
+        # Verify decryption
+        local status_file="$result_dir/decrypt_status.txt"
+        vmrun_t -T ws -gu "$GU" -gp "$GP" copyFileFromGuestToHost "$VMX_PATH" \
+            "${GUEST_ANALYSIS_DIR}\\decrypt_status.txt" "$(cygpath -w "$status_file" 2>/dev/null || echo "$status_file")" 2>/dev/null || true
+        if [ -f "$status_file" ]; then
+            local status_content
+            status_content=$(cat "$status_file" | tr -d '\r')
+            if [[ "$status_content" == *"FAIL"* ]]; then
+                err "Decryption failed inside VM: $status_content"
+                exit 1
+            fi
+            log "Decryption successful inside VM"
+        else
+            warn "Could not verify decryption status (status file not retrieved)"
+        fi
+    fi
 
     # Step 6: Pre-execution screenshot + process list
     log "Step 6: Pre-execution snapshot..."
@@ -695,7 +770,7 @@ unpack_level2() {
     # Check if tiny-unpack.exe exists locally
     if [ ! -f "$tunpack_local" ]; then
         err "tiny-unpack.exe not found at $tunpack_local"
-        err "Build it first: cd tools/vmware-sandbox/tiny-unpack && GOOS=windows GOARCH=amd64 go build -o tiny-unpack.exe ."
+        err "Build it first: cd Tools/vmware-sandbox/tiny-unpack && GOOS=windows GOARCH=amd64 go build -o tiny-unpack.exe ."
         return 1
     fi
 
@@ -1340,7 +1415,7 @@ case "${1:-}" in
         local checker_exe="$SCRIPT_DIR/sandbox-evasion-check/sandbox-evasion-check.exe"
         if [ ! -f "$checker_exe" ]; then
             err "sandbox-evasion-check.exe not found. Build it first:"
-            err "  cd tools/vmware-sandbox/sandbox-evasion-check && GOOS=windows GOARCH=amd64 go build -o sandbox-evasion-check.exe"
+            err "  cd Tools/vmware-sandbox/sandbox-evasion-check && GOOS=windows GOARCH=amd64 go build -o sandbox-evasion-check.exe"
             exit 1
         fi
         ensure_running
@@ -1358,38 +1433,10 @@ case "${1:-}" in
             warn "Could not retrieve report. Check VM GUI for results."
         fi
         ;;
-    setup-guest)
-        log "Setting up guest VM with analysis tools..."
-        local setup_script="$SCRIPT_DIR/setup/guest-setup.ps1"
-        if [ ! -f "$setup_script" ]; then
-            err "guest-setup.ps1 not found at: $setup_script"
-            exit 1
-        fi
-        ensure_running
-        # Need NAT for downloads
-        log "Switching to NAT for tool downloads..."
-        cmd_net_nat
-        sleep 3
-        # Copy and run setup script
-        local skip_flag=""
-        if [ "${2:-}" = "--skip-optional" ]; then
-            skip_flag="-SkipOptional"
-        fi
-        local force_flag=""
-        if [ "${2:-}" = "--force" ] || [ "${3:-}" = "--force" ]; then
-            force_flag="-Force"
-        fi
-        cmd_run_script "$setup_script" 600
-        # Switch back to Host-Only after setup
-        log "Switching back to Host-Only..."
-        cmd_net_isolate
-        log "Guest setup complete. Create a snapshot to preserve this state:"
-        log "  bash tools/vmware-sandbox/sandbox.sh snapshot clean_with_tools"
-        ;;
     *)
         echo "VMware Sandbox - Dynamic Malware Analysis"
         echo ""
-        echo "Usage: bash tools/vmware-sandbox/sandbox.sh <command> [args]"
+        echo "Usage: bash Tools/vmware-sandbox/sandbox.sh <command> [args]"
         echo ""
         echo "VM Management:"
         echo "  start                          Start VM (headless)"
@@ -1458,13 +1505,6 @@ case "${1:-}" in
         echo "  build-response [args]          Build raw HTTP response with CRLF"
         echo "                                 --template vidar-config|vidar-client|generic-json"
         echo "                                 --list-templates for all options"
-        echo ""
-        echo "Setup:"
-        echo "  setup-guest [--skip-optional] [--force]"
-        echo "                                 Auto-install analysis tools in guest VM"
-        echo "                                 Downloads x64dbg, PE-sieve, HollowsHunter, etc."
-        echo "                                 --skip-optional: skip FakeNet, dnSpy, CyberChef, etc."
-        echo "                                 --force: re-download even if already installed"
         echo ""
         echo "Post-Analysis:"
         echo "  regshot-diff <export.txt>      Analyze Regshot diff for persistence indicators"

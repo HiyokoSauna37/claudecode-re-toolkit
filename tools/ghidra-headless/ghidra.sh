@@ -263,21 +263,77 @@ case "${1:-}" in
         ;;
     yara-scan)
         if [ -z "$2" ]; then
-            echo "Usage: ghidra.sh yara-scan <binary>"
+            echo "Usage: ghidra.sh yara-scan <binary|encrypted.enc.gz>"
             echo "  Scans raw binary with YARA rules (APT attribution, malware family)"
+            echo "  Supports .enc.gz quarantine files (auto-decrypt in container)"
             exit 1
         fi
-        echo "=== YARA Scan: $(basename "$2") ==="
-        python3 "$SCRIPT_DIR/yara_scanner.py" "$2" --output-dir "$SCRIPT_DIR/output"
+        SCAN_TARGET="$2"
+        YARA_CLEANUP=""
+        if [[ "$2" == *.enc.gz ]]; then
+            echo "[*] Detected .enc.gz file, decrypting in container for YARA scan..."
+            ensure_running
+            SCAN_TARGET=$(decrypt_in_container "$2")
+            if [ $? -ne 0 ]; then
+                echo "Error: Decryption failed. Aborting YARA scan."
+                exit 1
+            fi
+            YARA_CLEANUP="$SCAN_TARGET"
+            # Extract from container to temp dir for host-side YARA scan
+            local tmp_dir
+            tmp_dir=$(mktemp -d)
+            local dec_name
+            dec_name=$(basename "$SCAN_TARGET")
+            docker cp "$CONTAINER:$SCAN_TARGET" "$tmp_dir/$dec_name"
+            SCAN_TARGET="$tmp_dir/$dec_name"
+            YARA_CLEANUP_HOST="$tmp_dir"
+        fi
+        echo "=== YARA Scan: $(basename "$SCAN_TARGET") ==="
+        python3 "$SCRIPT_DIR/yara_scanner.py" "$SCAN_TARGET" --output-dir "$SCRIPT_DIR/output"
+        # Cleanup
+        if [ -n "$YARA_CLEANUP" ]; then
+            cleanup_container "$YARA_CLEANUP"
+        fi
+        if [ -n "${YARA_CLEANUP_HOST:-}" ]; then
+            rm -rf "$YARA_CLEANUP_HOST"
+        fi
         ;;
     capa)
         if [ -z "$2" ]; then
-            echo "Usage: ghidra.sh capa <binary>"
+            echo "Usage: ghidra.sh capa <binary|encrypted.enc.gz>"
             echo "  CAPA analysis (capabilities + MITRE ATT&CK mapping)"
+            echo "  Supports .enc.gz quarantine files (auto-decrypt in container)"
             exit 1
         fi
-        echo "=== CAPA Analysis: $(basename "$2") ==="
-        python3 "$SCRIPT_DIR/capa_scanner.py" "$2" --output-dir "$SCRIPT_DIR/output"
+        CAPA_TARGET="$2"
+        CAPA_CLEANUP=""
+        if [[ "$2" == *.enc.gz ]]; then
+            echo "[*] Detected .enc.gz file, decrypting in container for CAPA..."
+            ensure_running
+            CAPA_TARGET=$(decrypt_in_container "$2")
+            if [ $? -ne 0 ]; then
+                echo "Error: Decryption failed. Aborting CAPA analysis."
+                exit 1
+            fi
+            CAPA_CLEANUP="$CAPA_TARGET"
+            # Extract from container to temp dir for host-side CAPA scan
+            local tmp_dir
+            tmp_dir=$(mktemp -d)
+            local dec_name
+            dec_name=$(basename "$CAPA_TARGET")
+            docker cp "$CONTAINER:$CAPA_TARGET" "$tmp_dir/$dec_name"
+            CAPA_TARGET="$tmp_dir/$dec_name"
+            CAPA_CLEANUP_HOST="$tmp_dir"
+        fi
+        echo "=== CAPA Analysis: $(basename "$CAPA_TARGET") ==="
+        python3 "$SCRIPT_DIR/capa_scanner.py" "$CAPA_TARGET" --output-dir "$SCRIPT_DIR/output"
+        # Cleanup
+        if [ -n "$CAPA_CLEANUP" ]; then
+            cleanup_container "$CAPA_CLEANUP"
+        fi
+        if [ -n "${CAPA_CLEANUP_HOST:-}" ]; then
+            rm -rf "$CAPA_CLEANUP_HOST"
+        fi
         ;;
     ioc-extract)
         if [ -z "$2" ]; then
