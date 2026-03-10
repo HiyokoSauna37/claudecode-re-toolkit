@@ -27,6 +27,7 @@ cc-malware-toolkit/
 - **Windows 10/11**（Linux/macOSは未サポート）
 - [Claude Code](https://claude.com/claude-code) がインストール済み
 - Docker Desktop がインストール・起動済み
+- [VMware Workstation Pro](https://www.vmware.com/products/desktop-hypervisor/workstation-and-fusion)（vmware-sandboxスキルに必要、vmrun CLI利用）
 - Go 1.21+ （Go版ツールのビルド用）
 - Python 3.10+
 

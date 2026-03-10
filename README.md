@@ -36,6 +36,7 @@ Reverse engineering & malware analysis toolkit for [Claude Code](https://claude.
 - **Windows 10/11** (Linux/macOS is not officially supported)
 - [Claude Code](https://claude.com/claude-code) installed
 - Docker Desktop running
+- [VMware Workstation Pro](https://www.vmware.com/products/desktop-hypervisor/workstation-and-fusion) (vmware-sandbox skill requires vmrun CLI)
 - Go 1.21+
 - Python 3.10+
 
