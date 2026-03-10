@@ -44,7 +44,7 @@ Reverse engineering & malware analysis toolkit for [Claude Code](https://claude.
 
 ```bash
 # Clone
-git clone https://github.com/<your-username>/claudecode-re-toolkit.git
+git clone https://github.com/HiyokoSauna37/claudecode-re-toolkit.git
 cd claudecode-re-toolkit
 
 # Environment variables
