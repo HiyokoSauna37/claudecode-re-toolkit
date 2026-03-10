@@ -51,20 +51,15 @@ cd claudecode-re-toolkit
 cp .env.example .env
 # Edit .env with your API keys and passwords
 
-# Build proxy-web
-cd tools/proxy-web
-go build -o proxy-web.exe .
-docker build -t proxy-web-browser:latest .
-cd ../..
-
-# Start ghidra-headless
-cd tools/ghidra-headless
-docker compose up -d
-cd ../..
+# Build Docker images
+docker build -t proxy-web-browser:latest tools/proxy-web/
+docker compose -f tools/ghidra-headless/docker-compose.yml up -d
 
 # VMware sandbox setup (see docs)
 # tools/vmware-sandbox/docs/VM-SETUP.md
 ```
+
+Pre-built Windows binaries (proxy-web.exe, vmrun-wrapper.exe, etc.) are included in the repository. No Go build required.
 
 ### Usage with Claude Code
 

@@ -45,16 +45,15 @@ cp .env.example .env
 #### proxy-web（Docker必須）
 
 ```bash
-cd tools/proxy-web
-go build -o proxy-web.exe .
-docker build -t proxy-web-browser:latest .
+docker build -t proxy-web-browser:latest tools/proxy-web/
 ```
+
+proxy-web.exeはリポジトリに同梱済み。Goビルド不要。
 
 #### ghidra-headless（Docker必須）
 
 ```bash
-cd tools/ghidra-headless
-docker compose up -d
+docker compose -f tools/ghidra-headless/docker-compose.yml up -d
 ```
 
 #### vmware-sandbox（VMware Workstation必須）

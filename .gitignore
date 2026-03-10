@@ -1,9 +1,18 @@
-# Binaries
-*.exe
+# Binaries (general)
 *.exe~
 *.dll
 *.so
 *.dylib
+
+# Exclude .exe by default, but allow pre-built tool binaries
+*.exe
+!tools/proxy-web/proxy-web.exe
+!tools/vmware-sandbox/vmrun-wrapper/vmrun-wrapper.exe
+!tools/vmware-sandbox/memdump-racer/memdump-racer.exe
+!tools/vmware-sandbox/tiny-unpack/tiny-unpack.exe
+!tools/vmware-sandbox/decrypt-tool/decrypt-tool.exe
+!tools/vmware-sandbox/sandbox-evasion-check/sandbox-evasion-check.exe
+!tools/vmware-sandbox/vm-detect-checker/vm-detect-checker.exe
 
 # Test binary
 *.test
