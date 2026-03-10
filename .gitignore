@@ -1,32 +1,67 @@
-# If you prefer the allow list template instead of the deny list, see community template:
-# https://github.com/github/gitignore/blob/main/community/Golang/Go.AllowList.gitignore
-#
-# Binaries for programs and plugins
+# Binaries
 *.exe
 *.exe~
 *.dll
 *.so
 *.dylib
 
-# Test binary, built with `go test -c`
+# Test binary
 *.test
 
-# Code coverage profiles and other test artifacts
+# Coverage
 *.out
 coverage.*
 *.coverprofile
 profile.cov
 
-# Dependency directories (remove the comment below to include it)
-# vendor/
-
-# Go workspace file
+# Go workspace
 go.work
 go.work.sum
 
-# env file
+# Environment
 .env
 
 # Editor/IDE
-# .idea/
-# .vscode/
+.idea/
+.vscode/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+
+# Quarantine (encrypted malware files)
+tools/proxy-web/Quarantine/
+
+# Analysis output (generated files)
+tools/ghidra-headless/output/*
+!tools/ghidra-headless/output/.gitkeep
+tools/vmware-sandbox/output/*
+!tools/vmware-sandbox/output/.gitkeep
+
+# Logs
+tools/proxy-web/logs/*
+!tools/proxy-web/logs/.gitkeep
+tools/ghidra-headless/logs/*
+!tools/ghidra-headless/logs/.gitkeep
+tools/vmware-sandbox/logs/*
+!tools/vmware-sandbox/logs/.gitkeep
+
+# Analysis reports (optional, uncomment to ignore)
+# reports/
+
+# Input binaries (don't commit malware samples)
+tools/ghidra-headless/input/*
+!tools/ghidra-headless/input/.gitkeep
+tools/vmware-sandbox/input/*
+!tools/vmware-sandbox/input/.gitkeep
+
+# YARA rules (downloaded, not committed)
+tools/ghidra-headless/yara-rules/*
+!tools/ghidra-headless/yara-rules/.gitkeep
+
+# OS
+Thumbs.db
+.DS_Store

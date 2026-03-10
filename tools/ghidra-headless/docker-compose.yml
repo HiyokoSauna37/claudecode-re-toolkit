@@ -1,0 +1,12 @@
+services:
+  ghidra:
+    build: .
+    container_name: ghidra-headless
+    volumes:
+      - ./input:/analysis/input
+      - ./output:/analysis/output
+    environment:
+      - MAXMEM=4G
+    tty: true
+    stdin_open: true
+    restart: unless-stopped
