@@ -61,6 +61,25 @@ docker compose -f tools/ghidra-headless/docker-compose.yml up -d
 
 Pre-built Windows binaries (proxy-web.exe, vmrun-wrapper.exe, etc.) are included in the repository. No Go build required.
 
+### Environment Variables (.env)
+
+Copy `.env.example` to `.env` and configure:
+
+| Variable | Description | Required for |
+|----------|-------------|-------------|
+| `QUARANTINE_PASSWORD` | Password for AES-256-CBC encryption of downloaded malware files. Set any strong password. | proxy-web |
+| `VIRUSTOTAL_API_KEY` | VirusTotal API key ([free tier](https://www.virustotal.com/gui/join-us) available). Used for hash lookups and behavior analysis. | proxy-web (`check` / `behavior` / `lookup`) |
+| `ABUSECH_AUTH_KEY` | [abuse.ch](https://auth.abuse.ch/) API key for MalwareBazaar / ThreatFox search. Optional — works without it but with rate limits. | proxy-web (`bazaar` / `threatfox`, optional) |
+| `VMRUN_PATH` | Full path to `vmrun.exe`. Example: `C:\Program Files (x86)\VMware\VMware Workstation\vmrun.exe` | vmware-sandbox |
+| `VM_VMX_PATH` | Full path to the VM's `.vmx` file. Example: `C:\VMs\Win10\Win10.vmx` | vmware-sandbox |
+| `VM_GUEST_USER` | Guest OS login username | vmware-sandbox |
+| `VM_GUEST_PASS` | Guest OS login password | vmware-sandbox |
+| `VM_GUEST_PROFILE` | Guest OS user profile directory. Example: `C:\Users\analyst` | vmware-sandbox |
+| `VM_SNAPSHOT` | Clean snapshot name to revert to after analysis (default: `clean_with_tools`) | vmware-sandbox (optional) |
+| `VMRUN_TIMEOUT` | Timeout in seconds for vmrun commands (default: `30`) | vmware-sandbox (optional) |
+
+> **Note:** proxy-web and ghidra-headless only require `QUARANTINE_PASSWORD` and optionally the API keys. The `VM_*` variables are only needed if you use vmware-sandbox.
+
 ### Usage with Claude Code
 
 ```bash
