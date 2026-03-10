@@ -45,6 +45,27 @@ Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope CurrentUser
 
 ## Step 3: 解析ツールのインストール
 
+### 自動インストール（推奨）
+
+`setup-guest` コマンドで必須・推奨ツールを自動ダウンロード＆配置:
+
+```bash
+# VM起動後に実行（NATに自動切替 → ツールDL → Host-Onlyに復帰）
+bash tools/vmware-sandbox/sandbox.sh setup-guest
+
+# 必須ツールのみ（FakeNet, dnSpy等をスキップ）
+bash tools/vmware-sandbox/sandbox.sh setup-guest --skip-optional
+
+# 全ツール再インストール
+bash tools/vmware-sandbox/sandbox.sh setup-guest --force
+```
+
+自動インストールされるツール:
+- **必須**: x64dbg, PE-sieve64, HollowsHunter64, Process Monitor, Detect It Easy, pestudio
+- **推奨**: FakeNet-NG, dnSpy, CyberChef, HxD, YARA, Autoruns, TCPView, Process Hacker
+
+### 手動インストール（自動インストールが失敗した場合）
+
 ゲスト内の推奨ディレクトリ構成:
 
 ```

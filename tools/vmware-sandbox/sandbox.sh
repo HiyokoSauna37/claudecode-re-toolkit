@@ -695,7 +695,7 @@ unpack_level2() {
     # Check if tiny-unpack.exe exists locally
     if [ ! -f "$tunpack_local" ]; then
         err "tiny-unpack.exe not found at $tunpack_local"
-        err "Build it first: cd Tools/vmware-sandbox/tiny-unpack && GOOS=windows GOARCH=amd64 go build -o tiny-unpack.exe ."
+        err "Build it first: cd tools/vmware-sandbox/tiny-unpack && GOOS=windows GOARCH=amd64 go build -o tiny-unpack.exe ."
         return 1
     fi
 
@@ -1340,7 +1340,7 @@ case "${1:-}" in
         local checker_exe="$SCRIPT_DIR/sandbox-evasion-check/sandbox-evasion-check.exe"
         if [ ! -f "$checker_exe" ]; then
             err "sandbox-evasion-check.exe not found. Build it first:"
-            err "  cd Tools/vmware-sandbox/sandbox-evasion-check && GOOS=windows GOARCH=amd64 go build -o sandbox-evasion-check.exe"
+            err "  cd tools/vmware-sandbox/sandbox-evasion-check && GOOS=windows GOARCH=amd64 go build -o sandbox-evasion-check.exe"
             exit 1
         fi
         ensure_running
@@ -1358,10 +1358,38 @@ case "${1:-}" in
             warn "Could not retrieve report. Check VM GUI for results."
         fi
         ;;
+    setup-guest)
+        log "Setting up guest VM with analysis tools..."
+        local setup_script="$SCRIPT_DIR/setup/guest-setup.ps1"
+        if [ ! -f "$setup_script" ]; then
+            err "guest-setup.ps1 not found at: $setup_script"
+            exit 1
+        fi
+        ensure_running
+        # Need NAT for downloads
+        log "Switching to NAT for tool downloads..."
+        cmd_net_nat
+        sleep 3
+        # Copy and run setup script
+        local skip_flag=""
+        if [ "${2:-}" = "--skip-optional" ]; then
+            skip_flag="-SkipOptional"
+        fi
+        local force_flag=""
+        if [ "${2:-}" = "--force" ] || [ "${3:-}" = "--force" ]; then
+            force_flag="-Force"
+        fi
+        cmd_run_script "$setup_script" 600
+        # Switch back to Host-Only after setup
+        log "Switching back to Host-Only..."
+        cmd_net_isolate
+        log "Guest setup complete. Create a snapshot to preserve this state:"
+        log "  bash tools/vmware-sandbox/sandbox.sh snapshot clean_with_tools"
+        ;;
     *)
         echo "VMware Sandbox - Dynamic Malware Analysis"
         echo ""
-        echo "Usage: bash Tools/vmware-sandbox/sandbox.sh <command> [args]"
+        echo "Usage: bash tools/vmware-sandbox/sandbox.sh <command> [args]"
         echo ""
         echo "VM Management:"
         echo "  start                          Start VM (headless)"
@@ -1430,6 +1458,13 @@ case "${1:-}" in
         echo "  build-response [args]          Build raw HTTP response with CRLF"
         echo "                                 --template vidar-config|vidar-client|generic-json"
         echo "                                 --list-templates for all options"
+        echo ""
+        echo "Setup:"
+        echo "  setup-guest [--skip-optional] [--force]"
+        echo "                                 Auto-install analysis tools in guest VM"
+        echo "                                 Downloads x64dbg, PE-sieve, HollowsHunter, etc."
+        echo "                                 --skip-optional: skip FakeNet, dnSpy, CyberChef, etc."
+        echo "                                 --force: re-download even if already installed"
         echo ""
         echo "Post-Analysis:"
         echo "  regshot-diff <export.txt>      Analyze Regshot diff for persistence indicators"
