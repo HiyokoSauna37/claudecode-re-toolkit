@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/HiyokoSauna37/cc-malware-toolkit/tools/proxy-web/orchestrator"
+	"github.com/HiyokoSauna37/claudecode-re-toolkit/tools/proxy-web/orchestrator"
 )
 
 func main() {

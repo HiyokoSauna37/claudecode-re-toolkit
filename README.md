@@ -1,6 +1,6 @@
-# cc-malware-toolkit
+# claudecode-re-toolkit
 
-Malware analysis toolkit for [Claude Code](https://claude.com/claude-code) — integrating static analysis, dynamic analysis, and web forensics through Claude Code skills.
+Reverse engineering & malware analysis toolkit for [Claude Code](https://claude.com/claude-code) — integrating static analysis, dynamic analysis, and web forensics through Claude Code skills.
 
 ## Features
 
@@ -42,8 +42,8 @@ Malware analysis toolkit for [Claude Code](https://claude.com/claude-code) — i
 
 ```bash
 # Clone
-git clone https://github.com/<your-username>/cc-malware-toolkit.git
-cd cc-malware-toolkit
+git clone https://github.com/<your-username>/claudecode-re-toolkit.git
+cd claudecode-re-toolkit
 
 # Environment variables
 cp .env.example .env
