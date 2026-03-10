@@ -1,5 +1,7 @@
 # claudecode-re-toolkit
 
+**English** | [Japanese (日本語)](README_JP.md)
+
 Reverse engineering & malware analysis toolkit for [Claude Code](https://claude.com/claude-code) — integrating static analysis, dynamic analysis, and web forensics through Claude Code skills.
 
 ## Features
