@@ -1,6 +1,6 @@
 ---
 name: ghidra-headless
-description: Ghidra Headless AnalyzerをDockerコンテナで実行し、バイナリの静的解析・デコンパイル・インポート分析を行う。マルウェア解析、CTF reversing、フォレンジックで発見された不審バイナリの深掘りに対応。
+description: Ghidra Headless AnalyzerをDockerコンテナで実行し、バイナリの静的解析・デコンパイル・インポート分析を行う。Use when: バイナリ解析, デコンパイル, 静的解析, reverse engineering, マルウェア解析, CTF reversing, 逆アセンブル, EXE解析, DLL解析, 不審バイナリ
 instructions: |
   スキル実行手順：
   1. コンテナ状態を確認: docker inspect -f '{{.State.Status}}' ghidra-headless
@@ -258,6 +258,7 @@ proxy-webで隔離されたEXE/DLL等のバイナリを解析する手順:
 - `decrypt_quarantine.py`をホストで実行禁止（Docker環境ガードが自動拒否する）
 - `decrypt_quarantine.ps1`等のPS1復号スクリプトもホストで実行禁止
 - 暗号化ファイル(.enc.gz)はそのままコンテナ/VM内に転送→内部で復号する
+- この規則違反はユーザーから繰り返し指摘されている。**絶対に破らないこと**
 
 ### 推奨: quarantine-analyze ワンコマンド（v2）
 
@@ -346,6 +347,9 @@ docker exec ghidra-headless rm -f /tmp/<decrypted_binary> /tmp/<encrypted_file>
 | 10 | 制限事項 | decompile_all.py制限事項（Jython互換性、大量関数） |
 | 11 | ツール連携 | Mergen Devirtualization連携（VMProtect二層構造、LLVM IR） |
 | 12 | 既知の問題 | 全既知問題（bind mount、Python deps、MSYS path、Jython Unicode、gcompat等） |
+| 13 | マルウェアパターン | .NET Loader + Process Hollowing（MSILZilla系、65k+ジャンク関数、多言語難読化） |
+| 14 | マルウェアパターン | Go製Dropper + Dead Drop Resolver（Pastebin/GitLab DDR、wolfSSL静的リンク） |
+| 15 | ツール修正 | .enc.gzファイルのyara-scan/capa自動復号サポート（2026-03-11追加） |
 
 ## Radare2との併用
 

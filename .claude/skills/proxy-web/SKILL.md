@@ -1,3 +1,18 @@
+---
+name: proxy-web
+description: |
+  Safely access dangerous websites (malware distribution, phishing, C2 servers) via Docker-isolated browser and perform forensic analysis. Downloads are AES-256 encrypted inside the container - no raw malware touches the host. Includes VirusTotal, MalwareBazaar, ThreatFox lookups and directory listing parsing.
+  Use when: "analyze this URL", "download malware safely", "check this suspicious site", "C2 server profiling", "proxy-web", "access malicious URL", "VT check hash", "MalwareBazaar search", "ThreatFox lookup", "directory listing"
+instructions: |
+  1. Build if needed: cd tools/proxy-web && go build -o proxy-web.exe .
+  2. Run: proxy-web.exe "<URL>" (add --tor for Tor routing)
+  3. For VT: proxy-web.exe check <sha256>
+  4. For MalwareBazaar: proxy-web.exe bazaar hash <sha256>
+  5. For ThreatFox: proxy-web.exe threatfox ioc "<ip>"
+  6. For directory listing: proxy-web.exe list "<URL>"
+  7. For decryption: proxy-web.exe decrypt <file.enc.gz>
+  8. If download detected, offer Ghidra headless analysis
+---
 # Proxy Web
 
 危険なWebサイト（マルウェア配布サイト、フィッシングサイト等）に安全にアクセスし、フォレンジック分析を行うツール。
@@ -137,9 +152,15 @@ docker build -t proxy-web-browser:latest .
     ```bash
     bash tools/ghidra-headless/ghidra.sh quarantine-analyze "tools/proxy-web/Quarantine/<domain>/<timestamp>/<file>.enc.gz"
     ```
+  - **quarantine CLIツール** で隔離ファイル管理:
+    ```bash
+    ./tools/quarantine/quarantine.exe list              # 一覧表示
+    ./tools/quarantine/quarantine.exe check             # コンテナ準備状況確認
+    ./tools/quarantine/quarantine.exe analyze 1         # 番号指定で解析
+    ```
   - 手動手順（フォールバック）:
     ```bash
-    # 暗号化のままコンテナの /tmp/ へ転送
+    # 暗号化のままコンテナの /tmp/ へ転送（!! /analysis/input/ ではなく /tmp/ を使うこと !!）
     docker cp "tools/proxy-web/Quarantine/<domain>/<timestamp>/<encrypted_file>" ghidra-headless:/tmp/
     # コンテナ内で復号化（decrypt_quarantine.pyはDockerイメージに内蔵済み）
     docker exec -e QUARANTINE_PASSWORD="<password>" ghidra-headless \
@@ -180,6 +201,10 @@ docker build -t proxy-web-browser:latest .
 ### --torがChromiumにプロキシ未指定
 - **問題**: `--tor`オプションでChromium自体にSOCKS5プロキシを指定していない
 - **解決**: `USE_TOR=1`環境変数をコンテナに渡し、browser_script.pyで`--proxy-server=socks5://127.0.0.1:9050`をChromiumに追加
+
+### tor-proxy未起動エラー
+- **問題**: tor-proxyコンテナ未起動時に`--tor`で即エラー（"No such container"）
+- **解決**: `ensureTorProxy()`関数を追加。自動プル・起動・Tor回線確立待機を実行
 
 ### Docker JSON出力切り詰め
 - **問題**: network_logが巨大な場合、DockerログのマルチプレクシングでJSONが分割されパーサーが失敗
