@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Malware Analysis Toolkit</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <h1>Malware Analysis Toolkit</h1>
+    <div id="mode-indicator">
+      Mode: <span id="mode-label">---</span>
+      <button id="mode-toggle" onclick="toggleMode()">Switch</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- Left: Environment Status -->
+    <section id="status-panel">
+      <h2>Environment Status</h2>
+      <div id="status-list">
+        <div class="status-item loading">Loading...</div>
+      </div>
+      <button onclick="refreshStatus()">Refresh</button>
+    </section>
+
+    <!-- Right: Chat & Execution -->
+    <section id="chat-panel">
+      <div id="chat-header">
+        <select id="skill-select">
+          <option value="">Free Chat</option>
+        </select>
+      </div>
+      <div id="chat-messages"></div>
+      <div id="chat-input-row">
+        <input type="text" id="prompt-input" placeholder="Enter prompt..."
+               onkeydown="if(event.key==='Enter')executePrompt()">
+        <button id="execute-btn" onclick="executePrompt()">Execute</button>
+        <button id="cancel-btn" onclick="cancelExecution()" style="display:none">Cancel</button>
+      </div>
+    </section>
+  </main>
+
+  <!-- Bottom: Tool Activity Log -->
+  <section id="tool-log-panel">
+    <h2>Tool Activity</h2>
+    <div id="tool-log"></div>
+  </section>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
