@@ -26,8 +26,8 @@ OUTPUT_DIR = Path('/output')
 
 def calculate_hashes(file_path: Path) -> dict:
     """Calculate MD5, SHA1, SHA256 hashes of a file."""
-    md5 = hashlib.md5()
-    sha1 = hashlib.sha1()
+    md5 = hashlib.md5(usedforsecurity=False)
+    sha1 = hashlib.sha1(usedforsecurity=False)
     sha256 = hashlib.sha256()
 
     with open(file_path, 'rb') as f:
@@ -254,6 +254,10 @@ def analyze_url(url: str, password: str) -> dict:
     for req in network_requests:
         content_type = req.get('ContentType', '').lower()
         req_url = req['URL']
+        parsed_url = urlparse(req_url)
+        # Only download from http/https schemes (block file://, javascript://, etc.)
+        if parsed_url.scheme not in ('http', 'https'):
+            continue
         if (any(dt in content_type for dt in downloadable_types)
                 and req_url not in already_downloaded):
             info = download_from_network(req_url, password)

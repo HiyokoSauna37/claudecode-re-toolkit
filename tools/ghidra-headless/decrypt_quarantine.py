@@ -93,14 +93,14 @@ def main():
     parser.add_argument('-p', '--password', type=str, help='Decryption password', default=None)
 
     args = parser.parse_args()
-    logger.debug("main: parsed arguments - encrypted_file='%s', output='%s', password=%s", args.encrypted_file, args.output, "provided" if args.password else "not provided")
+    logger.debug("main: parsed arguments - encrypted_file='%s', output='%s', password=%s", args.encrypted_file, args.output, "[SET]" if args.password else "[NOT SET]")
 
     password = args.password or os.environ.get('QUARANTINE_PASSWORD')
     if not password:
         logger.error("main: No password provided via -p flag or QUARANTINE_PASSWORD environment variable")
         print("Error: Password required (use -p or QUARANTINE_PASSWORD env)")
         sys.exit(1)
-    logger.debug("main: Password source: %s", "command-line argument" if args.password else "QUARANTINE_PASSWORD env")
+    logger.debug("main: Password source: %s", "-p flag" if args.password else "QUARANTINE_PASSWORD env")
 
     encrypted_path = Path(args.encrypted_file)
     if not encrypted_path.exists():
