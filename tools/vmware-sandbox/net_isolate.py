@@ -1,0 +1,319 @@
+#!/usr/bin/env python3
+"""
+VMware VM Network Isolation Tool
+
+VMXファイルのネットワーク設定を直接書き換えて、
+マルウェア解析時のネットワーク隔離を制御する。
+
+Usage:
+    python net_isolate.py status   [--vmx PATH]
+    python net_isolate.py isolate  [--vmx PATH]  # Host-Only
+    python net_isolate.py nat      [--vmx PATH]  # NAT
+    python net_isolate.py disconnect [--vmx PATH] # 完全切断
+"""
+
+import argparse
+import logging
+import os
+import re
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+# .envから設定を読み込む
+def load_env():
+    logger.debug("load_env() called")
+    env_path = Path(__file__).resolve().parent.parent.parent / ".env"
+    logger.debug("Resolved .env path: %s", env_path)
+    config = {}
+    if env_path.exists():
+        logger.debug(".env file found, reading contents")
+        for line in env_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                logger.debug("Skipping line (empty or comment): %r", line)
+                continue
+            if "=" in line:
+                key, value = line.split("=", 1)
+                key = key.strip()
+                value = value.strip()
+                config[key] = value
+                logger.debug("Loaded env var: %s", key)
+    else:
+        logger.debug(".env file not found at %s", env_path)
+    logger.debug("load_env() returning %d config entries", len(config))
+    return config
+
+
+def get_vmx_path(args_vmx=None):
+    logger.debug("get_vmx_path() called with args_vmx=%r", args_vmx)
+    if args_vmx:
+        logger.debug("Using VMX path from command-line argument: %s", args_vmx)
+        return args_vmx
+    logger.debug("No --vmx argument provided, loading from .env")
+    config = load_env()
+    vmx = config.get("VM_VMX_PATH")
+    if not vmx:
+        logger.error("VM_VMX_PATH not found in .env and --vmx not provided")
+        print("ERROR: VMX path not found. Set VM_VMX_PATH in .env or use --vmx", file=sys.stderr)
+        sys.exit(1)
+    logger.debug("get_vmx_path() returning VMX path from .env: %s", vmx)
+    return vmx
+
+
+def get_vmrun():
+    vmrun_path = r"C:\Program Files (x86)\VMware\VMware Workstation\vmrun.exe"
+    logger.debug("get_vmrun() returning: %s", vmrun_path)
+    return vmrun_path
+
+
+def is_vm_running(vmx_path):
+    logger.debug("is_vm_running() called with vmx_path=%r", vmx_path)
+    try:
+        cmd = [get_vmrun(), "list"]
+        logger.debug("Running subprocess: %s", cmd)
+        start_time = time.monotonic()
+        result = subprocess.run(
+            cmd,
+            capture_output=True, text=True, timeout=10
+        )
+        elapsed = time.monotonic() - start_time
+        logger.debug("Subprocess completed in %.3fs, returncode=%d", elapsed, result.returncode)
+        logger.debug("vmrun list stdout: %s", result.stdout.strip())
+        vmx_name = os.path.basename(vmx_path).lower()
+        running = vmx_name in result.stdout.lower()
+        logger.debug("Checking if %r is in vmrun list output: %s", vmx_name, running)
+        logger.debug("is_vm_running() returning %s", running)
+        return running
+    except Exception as e:
+        logger.error("is_vm_running() failed with %s: %s", type(e).__name__, e)
+        logger.debug("is_vm_running() returning False due to exception")
+        return False
+
+
+def read_vmx(vmx_path):
+    logger.debug("read_vmx() called with vmx_path=%r", vmx_path)
+    try:
+        with open(vmx_path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+        logger.debug("read_vmx() read %d lines from %s", len(lines), vmx_path)
+        return lines
+    except Exception as e:
+        logger.error("read_vmx() failed with %s: %s", type(e).__name__, e)
+        raise
+
+
+def write_vmx(vmx_path, lines):
+    logger.debug("write_vmx() called with vmx_path=%r, %d lines", vmx_path, len(lines))
+    try:
+        with open(vmx_path, "w", encoding="utf-8") as f:
+            f.writelines(lines)
+        logger.debug("write_vmx() successfully wrote %d lines to %s", len(lines), vmx_path)
+    except Exception as e:
+        logger.error("write_vmx() failed with %s: %s", type(e).__name__, e)
+        raise
+
+
+def get_current_network(vmx_path):
+    """VMXファイルから現在のネットワーク設定を読み取る"""
+    logger.debug("get_current_network() called with vmx_path=%r", vmx_path)
+    lines = read_vmx(vmx_path)
+    connection_type = None
+    start_connected = None
+
+    for line in lines:
+        match = re.match(r'^ethernet0\.connectionType\s*=\s*"(.+)"', line.strip())
+        if match:
+            connection_type = match.group(1)
+            logger.debug("Found connectionType=%r", connection_type)
+        match = re.match(r'^ethernet0\.startConnected\s*=\s*"(.+)"', line.strip())
+        if match:
+            start_connected = match.group(1)
+            logger.debug("Found startConnected=%r", start_connected)
+
+    if start_connected and start_connected.upper() == "FALSE":
+        logger.debug("startConnected is FALSE -> returning 'disconnected'")
+        return "disconnected"
+    result = connection_type or "unknown"
+    logger.debug("get_current_network() returning %r", result)
+    return result
+
+
+def set_network(vmx_path, mode):
+    """
+    VMXファイルのネットワーク設定を書き換える
+    mode: "hostonly", "nat", "disconnected"
+    """
+    logger.debug("set_network() called with vmx_path=%r, mode=%r", vmx_path, mode)
+    lines = read_vmx(vmx_path)
+    new_lines = []
+
+    # 設定値のマッピング
+    if mode == "disconnected":
+        target_type = "hostonly"  # typeはhostonlyのまま
+        target_connected = "FALSE"
+        logger.debug("Mode 'disconnected': target_type=%r, target_connected=%r", target_type, target_connected)
+    elif mode == "hostonly":
+        target_type = "hostonly"
+        target_connected = "TRUE"
+        logger.debug("Mode 'hostonly': target_type=%r, target_connected=%r", target_type, target_connected)
+    elif mode == "nat":
+        target_type = "nat"
+        target_connected = "TRUE"
+        logger.debug("Mode 'nat': target_type=%r, target_connected=%r", target_type, target_connected)
+    else:
+        logger.error("Unknown network mode: %r", mode)
+        print(f"ERROR: Unknown mode: {mode}", file=sys.stderr)
+        sys.exit(1)
+
+    found_type = False
+    found_connected = False
+
+    for line in lines:
+        if re.match(r'^ethernet0\.connectionType\s*=', line.strip()):
+            new_lines.append(f'ethernet0.connectionType = "{target_type}"\n')
+            found_type = True
+            logger.debug("Replaced existing connectionType line with %r", target_type)
+        elif re.match(r'^ethernet0\.startConnected\s*=', line.strip()):
+            new_lines.append(f'ethernet0.startConnected = "{target_connected}"\n')
+            found_connected = True
+            logger.debug("Replaced existing startConnected line with %r", target_connected)
+        else:
+            new_lines.append(line)
+
+    if not found_type:
+        new_lines.append(f'ethernet0.connectionType = "{target_type}"\n')
+        logger.debug("connectionType not found in VMX, appending new line: %r", target_type)
+    if not found_connected:
+        new_lines.append(f'ethernet0.startConnected = "{target_connected}"\n')
+        logger.debug("startConnected not found in VMX, appending new line: %r", target_connected)
+
+    write_vmx(vmx_path, new_lines)
+    logger.debug("set_network() completed for mode=%r", mode)
+
+
+def apply_network_change(vmx_path, no_restart=False):
+    """VMが起動中ならsuspend→resumeで設定を反映"""
+    logger.debug("apply_network_change() called with vmx_path=%r, no_restart=%r", vmx_path, no_restart)
+    vmrun = get_vmrun()
+    if no_restart:
+        logger.info("No-restart mode: skipping VM suspend/resume")
+        print("  VMX updated (no-restart mode). Change applies on next VM start.")
+        return
+    if is_vm_running(vmx_path):
+        logger.info("VM is running, suspending to apply network change")
+        print("  VM is running. Suspending to apply network change...")
+
+        suspend_cmd = [vmrun, "-T", "ws", "suspend", vmx_path]
+        logger.debug("Running suspend command: %s", suspend_cmd)
+        start_time = time.monotonic()
+        subprocess.run(suspend_cmd, timeout=60)
+        elapsed = time.monotonic() - start_time
+        logger.debug("Suspend completed in %.3fs", elapsed)
+
+        logger.info("Resuming VM after suspend")
+        print("  Resuming VM...")
+        start_cmd = [vmrun, "-T", "ws", "start", vmx_path, "nogui"]
+        logger.debug("Running start command: %s", start_cmd)
+        start_time = time.monotonic()
+        subprocess.run(start_cmd, timeout=60)
+        elapsed = time.monotonic() - start_time
+        logger.debug("Start completed in %.3fs", elapsed)
+
+        # VMware Tools needs time to start after resume
+        logger.info("Waiting 15 seconds for VMware Tools to initialize")
+        print("  Waiting for VMware Tools to initialize...")
+        time.sleep(15)
+        logger.info("Network change applied successfully")
+        print("  Network change applied.")
+    else:
+        logger.info("VM is not running, change will take effect on next start")
+        print("  VM is not running. Change will take effect on next start.")
+    logger.debug("apply_network_change() completed")
+
+
+def cmd_status(vmx_path):
+    logger.debug("cmd_status() called with vmx_path=%r", vmx_path)
+    current = get_current_network(vmx_path)
+    labels = {
+        "nat": "NAT (internet access - UNSAFE for malware)",
+        "hostonly": "Host-Only (isolated - SAFE)",
+        "disconnected": "Disconnected (fully isolated - SAFEST)",
+        "unknown": "Unknown",
+    }
+    label = labels.get(current, current)
+    logger.info("Current network status: %s (%s)", current, label)
+    print(f"Network: {label}")
+    logger.debug("cmd_status() returning %r", current)
+    return current
+
+
+def cmd_isolate(vmx_path, no_restart=False):
+    logger.debug("cmd_isolate() called with vmx_path=%r, no_restart=%r", vmx_path, no_restart)
+    logger.info("Network state change: -> Host-Only (isolated)")
+    print("[*] Setting network to Host-Only (isolated)...")
+    set_network(vmx_path, "hostonly")
+    apply_network_change(vmx_path, no_restart=no_restart)
+    logger.info("Network state change complete: Host-Only (isolated)")
+    print("[+] Network set to Host-Only. Safe for malware analysis.")
+
+
+def cmd_nat(vmx_path, no_restart=False):
+    logger.debug("cmd_nat() called with vmx_path=%r, no_restart=%r", vmx_path, no_restart)
+    logger.info("Network state change: -> NAT (internet access)")
+    print("[!] WARNING: NAT mode allows internet access from guest.")
+    print("[!] Only use for C2 communication capture.")
+    set_network(vmx_path, "nat")
+    apply_network_change(vmx_path, no_restart=no_restart)
+    logger.info("Network state change complete: NAT")
+    print("[+] Network set to NAT.")
+
+
+def cmd_disconnect(vmx_path, no_restart=False):
+    logger.debug("cmd_disconnect() called with vmx_path=%r, no_restart=%r", vmx_path, no_restart)
+    logger.info("Network state change: -> Disconnected (fully isolated)")
+    print("[*] Disconnecting network completely...")
+    set_network(vmx_path, "disconnected")
+    apply_network_change(vmx_path, no_restart=no_restart)
+    logger.info("Network state change complete: Disconnected")
+    print("[+] Network disconnected. Fully isolated.")
+
+
+def main():
+    logger.debug("main() called with sys.argv=%r", sys.argv)
+    parser = argparse.ArgumentParser(description="VMware VM Network Isolation Tool")
+    parser.add_argument("command", choices=["status", "isolate", "nat", "disconnect"])
+    parser.add_argument("--vmx", help="Path to VMX file (default: from .env)")
+    parser.add_argument("--no-restart", action="store_true",
+                        help="Only update VMX file, do not suspend/resume VM")
+    args = parser.parse_args()
+    logger.debug("Parsed arguments: command=%r, vmx=%r, no_restart=%r", args.command, args.vmx, args.no_restart)
+
+    vmx_path = get_vmx_path(args.vmx)
+    logger.debug("Resolved VMX path: %s", vmx_path)
+
+    if not os.path.exists(vmx_path):
+        logger.error("VMX file not found: %s", vmx_path)
+        print(f"ERROR: VMX file not found: {vmx_path}", file=sys.stderr)
+        sys.exit(1)
+    logger.debug("VMX file exists: %s", vmx_path)
+
+    if args.command == "status":
+        logger.debug("Dispatching to cmd_status")
+        cmd_status(vmx_path)
+    else:
+        logger.debug("Dispatching to cmd_%s", args.command)
+        commands = {
+            "isolate": cmd_isolate,
+            "nat": cmd_nat,
+            "disconnect": cmd_disconnect,
+        }
+        commands[args.command](vmx_path, no_restart=args.no_restart)
+    logger.debug("main() completed")
+
+
+if __name__ == "__main__":
+    main()

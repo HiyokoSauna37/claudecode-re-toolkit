@@ -1,0 +1,33 @@
+# ScarfaceStealer / Vidar系マルウェア識別ナレッジ（2026-03-04）
+
+## ScarfaceStealer概要
+- Vidar Stealerの亜種/リブランド（Vidar lineage）
+- C2サーバーでHTTPディレクトリリスティングを公開するパターンが多い
+- install.exe等の汎用ファイル名でドロップされることが多い
+- VMProtect/Themidaでパックされていることが多く、静的解析困難
+
+## C2サーバー特徴（39.106.81.175:5002の事例）
+- HTTPディレクトリリスティングが有効（Werkzeug/Python http.server）
+- 複数のマルウェアファミリーが同居（PPI = Pay-Per-Install ディストリビューション）
+- ファイルが定期的に更新される（ドロッパーのローテーション）
+
+## ANY.RUN活用ガイド（VMProtect anti-VMバイパス用フォールバック）
+- VMProtect検体がVMware環境のVM検知で実行を拒否する場合のフォールバック
+- ANY.RUNはKVM/QEMUベースのためVMwareバックドアI/Oポート検知を回避可能
+- 無料プランでも基本的な動的解析結果（プロセスツリー、ネットワーク通信、ファイルI/O）が確認可能
+- 有料プランではpcapダウンロード、メモリダンプ、YARA検索が利用可能
+
+## KVM/QEMU vs VMware のanti-VM検知差異
+| 検知手法 | VMware | KVM/QEMU (ANY.RUN) |
+|----------|--------|---------------------|
+| CPUID hypervisor bit | 検知される | 検知される（ただしCPUIDリーフが異なる） |
+| VMwareバックドアI/Oポート | 検知される | 存在しない（回避） |
+| レジストリキー (VMware Tools) | 検知される | 存在しない（回避） |
+| MAC prefix (00:0C:29等) | 検知される | 異なるprefix（回避） |
+| SMBIOS/DMI文字列 | "VMware" | カスタマイズ可能 |
+
+## マルチファミリーC2 / PPIディストリビューションパターン
+- 1つのC2サーバーに複数ファミリー（Vidar, ScarfaceStealer, Lumma等）が共存
+- PPI（Pay-Per-Install）ネットワークではインストーラーが複数のペイロードを順次ダウンロード
+- 各ペイロードは異なるC2を使用することがあるため、1検体の解析で複数のC2が判明する
+- proxy-webの `list` サブコマンドでディレクトリ構造を把握してから個別ダウンロードが効率的

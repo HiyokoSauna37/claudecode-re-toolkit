@@ -1,0 +1,312 @@
+#!/usr/bin/env python3
+"""
+Proxy Web - Sandboxed malware site analysis tool
+Safely access dangerous websites with full isolation and forensic logging
+"""
+
+import os
+import sys
+import json
+import csv
+import re
+import argparse
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Dict, List, Optional
+from urllib.parse import urlparse
+import logging
+import requests
+import docker
+from dotenv import load_dotenv
+
+# Resolve .env from script directory's repo root (not CWD)
+_SCRIPT_DIR = Path(__file__).resolve().parent
+_ROOT_DIR = _SCRIPT_DIR.parent.parent
+load_dotenv(_ROOT_DIR / '.env')
+
+# Global logger
+logger = None
+
+
+def setup_logging():
+    """Setup logging to file and console with automatic cleanup of old logs."""
+    global logger
+
+    log_dir = _SCRIPT_DIR / 'logs'
+    log_dir.mkdir(exist_ok=True)
+
+    logger = logging.getLogger('proxy-web')
+    logger.setLevel(logging.INFO)
+    logger.handlers = []
+
+    today = datetime.now()
+    log_file = log_dir / f"{today.strftime('%Y%m%d')}.log"
+
+    file_handler = logging.FileHandler(log_file, mode='a', encoding='utf-8')
+    file_handler.setLevel(logging.INFO)
+    file_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
+    logger.addHandler(file_handler)
+
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(logging.INFO)
+    console_handler.setFormatter(logging.Formatter('%(message)s'))
+    logger.addHandler(console_handler)
+
+    # Cleanup old logs (>30 days)
+    cutoff_date = today - timedelta(days=30)
+    for log_path in log_dir.glob('*.log'):
+        try:
+            log_date = datetime.strptime(log_path.stem, '%Y%m%d')
+            if log_date < cutoff_date:
+                log_path.unlink()
+        except (ValueError, OSError):
+            pass
+
+    return logger
+
+
+def defang_to_refang(url: str) -> str:
+    """Convert defanged URL to normal URL (refang)."""
+    url = re.sub(r'hxxp(s?)', r'http\1', url, flags=re.IGNORECASE)
+    url = url.replace('[.]', '.')
+    url = url.replace('(.)', '.')
+    url = url.replace('{.}', '.')
+    url = url.replace('[@]', '@')
+    url = url.replace('(@)', '@')
+    url = url.replace(' ', '')
+    return url
+
+
+def check_virustotal(file_hash: str, api_key: str) -> Optional[Dict]:
+    """Check file hash on VirusTotal."""
+    if not api_key:
+        logger.warning("VirusTotal API key not found")
+        return None
+
+    url = f"https://www.virustotal.com/api/v3/files/{file_hash}"
+    headers = {'x-apikey': api_key}
+
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            stats = data['data']['attributes']['last_analysis_stats']
+            return {
+                'detected': stats['malicious'],
+                'total': sum(stats.values()),
+                'permalink': f"https://www.virustotal.com/gui/file/{file_hash}",
+                'scan_date': datetime.now().isoformat()
+            }
+        elif response.status_code == 404:
+            logger.info(f"Hash not found in VirusTotal: {file_hash}")
+            return {'detected': 0, 'total': 0, 'permalink': '', 'scan_date': ''}
+        else:
+            logger.warning(f"VirusTotal API error: {response.status_code}")
+            return None
+    except Exception as e:
+        logger.error(f"VirusTotal API request failed: {e}")
+        return None
+
+
+def save_network_log_csv(network_data: List[Dict], output_path: Path):
+    """Save network traffic log as CSV for Timeline Explorer."""
+    fieldnames = [
+        'Timestamp', 'RequestID', 'Method', 'URL', 'Domain', 'DestinationIP',
+        'StatusCode', 'ContentType', 'ContentLength', 'Referer', 'UserAgent',
+        'SetCookie', 'Duration', 'RedirectTo', 'Description'
+    ]
+
+    with open(output_path, 'w', newline='', encoding='utf-8-sig') as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(network_data)
+
+    logger.info(f"Network log saved: {output_path}")
+
+
+def run_in_docker(url: str, output_dir: Path, quarantine_password: str,
+                  use_tor: bool = False) -> Dict:
+    """Run browser automation in Docker container for isolation."""
+    logger.info("Starting Docker container for isolated browsing...")
+
+    client = docker.from_env()
+
+    container_config = {
+        'image': 'proxy-web-browser:latest',
+        'command': ['python', '/app/browser_script.py', url],
+        'volumes': {
+            str(output_dir.absolute()): {'bind': '/output', 'mode': 'rw'}
+        },
+        'environment': {
+            'QUARANTINE_PASSWORD': quarantine_password
+        },
+        'network_mode': 'bridge' if not use_tor else 'container:tor-proxy',
+        'mem_limit': '2g',
+        'cpu_quota': 50000,
+        'remove': True,
+        'detach': False
+    }
+
+    try:
+        output = client.containers.run(**container_config)
+        result = json.loads(output.decode('utf-8'))
+        logger.info("Docker container execution completed")
+        return result
+    except docker.errors.ContainerError as e:
+        logger.error(f"Container error: {e}")
+        raise
+    except docker.errors.ImageNotFound:
+        logger.error("Docker image 'proxy-web-browser:latest' not found. Build it first.")
+        raise
+    except Exception as e:
+        logger.error(f"Docker execution failed: {e}")
+        raise
+
+
+def save_metadata(metadata: Dict, output_path: Path):
+    """Save metadata as JSON."""
+    with open(output_path, 'w', encoding='utf-8') as f:
+        json.dump(metadata, f, indent=2, ensure_ascii=False)
+    logger.info(f"Metadata saved: {output_path}")
+
+
+def get_url(args) -> str:
+    """Get URL from CLI args, interactive prompt, or stdin pipe."""
+    if args.url:
+        return args.url
+
+    if sys.stdin.isatty():
+        # Interactive mode
+        print("\nEnter URL to analyze (supports defanged URLs):")
+        try:
+            return input("> ").strip()
+        except EOFError:
+            return ''
+    else:
+        # Pipe mode
+        return sys.stdin.readline().strip()
+
+
+def main():
+    """Main execution function."""
+    global logger
+    logger = setup_logging()
+
+    parser = argparse.ArgumentParser(
+        description='Proxy Web - Sandboxed malware site analysis tool')
+    parser.add_argument('url', nargs='?', default=None,
+                        help='URL to analyze (supports defanged URLs)')
+    parser.add_argument('--tor', action='store_true', help='Route through Tor')
+    args = parser.parse_args()
+
+    logger.info("=== Proxy Web - Malware Site Analysis Tool ===")
+
+    # Get encryption password
+    encryption_password = os.environ.get('QUARANTINE_PASSWORD')
+    if not encryption_password:
+        logger.error("QUARANTINE_PASSWORD not set in .env file")
+        sys.exit(1)
+
+    vt_api_key = os.environ.get('VIRUSTOTAL_API_KEY', '')
+
+    # Get URL
+    user_input = get_url(args)
+    if not user_input:
+        logger.error("No URL provided")
+        sys.exit(1)
+
+    # Refang URL
+    url = defang_to_refang(user_input)
+    logger.info(f"Target URL: {url}")
+    if url != user_input:
+        logger.info(f"Refanged from: {user_input}")
+
+    # Extract domain for folder structure
+    parsed = urlparse(url)
+    domain = parsed.netloc or 'unknown'
+    domain = domain.replace(':', '_')
+
+    # Create output directory
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    quarantine_dir = _SCRIPT_DIR / 'Quarantine' / domain / timestamp
+    quarantine_dir.mkdir(parents=True, exist_ok=True)
+    logger.info(f"Output directory: {quarantine_dir}")
+
+    # Run analysis in Docker
+    try:
+        result = run_in_docker(url, quarantine_dir, encryption_password,
+                               use_tor=args.tor)
+    except Exception as e:
+        logger.error(f"Analysis failed: {e}")
+
+        retry_count = 0
+        max_retries = 3
+
+        while retry_count < max_retries:
+            retry_count += 1
+            logger.info(f"Retry {retry_count}/{max_retries}...")
+
+            try:
+                use_tor = retry_count == 2
+                result = run_in_docker(url, quarantine_dir, encryption_password,
+                                       use_tor=use_tor)
+                break
+            except Exception as retry_error:
+                logger.error(f"Retry {retry_count} failed: {retry_error}")
+                if retry_count >= max_retries:
+                    logger.error("All retries exhausted")
+                    sys.exit(1)
+
+    # Process results - hashes already computed inside container
+    downloaded_files = result.get('downloads', [])
+
+    # VT check using hashes from container JSON
+    for download in downloaded_files:
+        hashes = download.get('hashes', {})
+        sha256 = hashes.get('sha256', '')
+        if sha256 and vt_api_key:
+            vt_result = check_virustotal(sha256, vt_api_key)
+            download['virustotal'] = vt_result
+
+    # Save network log as CSV
+    network_data = result.get('network_log', [])
+    if network_data:
+        csv_path = quarantine_dir / 'network.csv'
+        save_network_log_csv(network_data, csv_path)
+
+    # Save metadata
+    metadata = {
+        'url': url,
+        'original_input': user_input,
+        'timestamp': datetime.now().isoformat(),
+        'domain': domain,
+        'final_url': result.get('final_url', url),
+        'screenshot': result.get('screenshot', ''),
+        'html_file': result.get('html_file', ''),
+        'downloads': downloaded_files,
+        'network_log_file': 'network.csv',
+        'success': result.get('success', False),
+        'error': result.get('error', '')
+    }
+
+    metadata_path = quarantine_dir / 'metadata.json'
+    save_metadata(metadata, metadata_path)
+
+    # Summary
+    logger.info("\n=== Analysis Complete ===")
+    logger.info(f"Output: {quarantine_dir}")
+    logger.info(f"Downloaded files: {len(downloaded_files)}")
+    logger.info(f"Network requests: {len(network_data)}")
+
+    for dl in downloaded_files:
+        h = dl.get('hashes', {})
+        logger.info(f"  {dl['filename']}: SHA256={h.get('sha256', 'N/A')}")
+        vt = dl.get('virustotal')
+        if vt:
+            logger.info(f"    VT: {vt['detected']}/{vt['total']} {vt.get('permalink', '')}")
+
+    logger.info("=== Proxy Web Finished ===\n")
+
+
+if __name__ == '__main__':
+    main()

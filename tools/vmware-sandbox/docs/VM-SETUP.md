@@ -1,0 +1,244 @@
+# VMware Sandbox VM Setup Guide
+
+VMware Workstation上にマルウェア動的解析用のWindows VMを構築する手順。
+
+## 前提条件
+
+- VMware Workstation 17.x（Windows/Linux）またはVMware Fusion（macOS）
+- Windows 10/11 Pro ISOイメージ
+- 十分なディスク容量（VM: 80GB+推奨）
+- ホストRAM: 16GB+推奨（VM割り当て: 4GB+）
+
+## Step 1: VM作成
+
+1. VMware Workstationで新規VMを作成
+2. **OS**: Windows 10 Pro x64 または Windows 11 Pro x64
+3. **スペック推奨値**:
+   - RAM: 4GB以上（VM検知回避のため。2GB以下はVM判定される可能性あり）
+   - CPU: 2コア以上
+   - ディスク: 80GB以上（小さいディスクはVM判定される可能性あり）
+   - ネットワーク: NAT（初期セットアップ用）
+4. VMware Toolsをインストール（**必須** — vmrunコマンドに必要）
+
+## Step 2: 基本設定
+
+### Windowsの設定
+
+```powershell
+# Windows Defenderリアルタイム保護を無効化（管理者PowerShell）
+Set-MpPreference -DisableRealtimeMonitoring $true
+
+# Windows Updateを無効化（Group Policy Editor経由を推奨）
+# gpedit.msc → Computer Configuration → Administrative Templates → Windows Components → Windows Update → Configure Automatic Updates → Disabled
+
+# UAC通知レベルを最低に設定（Settings → User Account Control）
+
+# PowerShell実行ポリシーの設定
+Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope CurrentUser
+```
+
+### Python 3.10 インストール
+
+1. https://www.python.org/downloads/ からPython 3.10.x をダウンロード
+2. インストール時に「Add Python to PATH」をチェック
+3. 確認: `python --version`
+
+## Step 3: 解析ツールのインストール
+
+### 自動インストール（推奨）
+
+`setup-guest` コマンドで必須・推奨ツールを自動ダウンロード＆配置:
+
+```bash
+# VM起動後に実行（NATに自動切替 → ツールDL → Host-Onlyに復帰）
+bash tools/vmware-sandbox/sandbox.sh setup-guest
+
+# 必須ツールのみ（FakeNet, dnSpy等をスキップ）
+bash tools/vmware-sandbox/sandbox.sh setup-guest --skip-optional
+
+# 全ツール再インストール
+bash tools/vmware-sandbox/sandbox.sh setup-guest --force
+```
+
+自動インストールされるツール:
+- **必須**: x64dbg, PE-sieve64, HollowsHunter64, Process Monitor, Detect It Easy, pestudio
+- **推奨**: FakeNet-NG, dnSpy, CyberChef, HxD, YARA, Autoruns, TCPView, Process Hacker
+
+### 手動インストール（自動インストールが失敗した場合）
+
+ゲスト内の推奨ディレクトリ構成:
+
+```
+C:\Users\<username>\Desktop\tools\     ← 全ツールのベースディレクトリ
+C:\Users\<username>\Desktop\analysis\  ← 解析作業ディレクトリ
+```
+
+### 必須ツール
+
+| ツール | ダウンロード元 | 配置先 |
+|--------|---------------|--------|
+| x64dbg | https://x64dbg.com/ | tools\x64dbg\ |
+| PE-sieve (64bit) | https://github.com/hasherezade/pe-sieve/releases | tools\pe-sieve64.exe |
+| HollowsHunter (64bit) | https://github.com/hasherezade/hollows_hunter/releases | tools\hollows_hunter64.exe |
+| Process Monitor | https://learn.microsoft.com/sysinternals/downloads/procmon | tools\procmon\ |
+| Detect It Easy | https://github.com/horsicq/DIE-engine/releases | tools\die\ |
+| pestudio | https://www.winitor.com/ | tools\pestudio\ |
+
+### 推奨ツール
+
+| ツール | ダウンロード元 | 配置先 |
+|--------|---------------|--------|
+| FakeNet-NG | https://github.com/mandiant/flare-fakenet-ng/releases | tools\fakenet\ |
+| dnSpy | https://github.com/dnSpy/dnSpy/releases | tools\dnSpy\ |
+| CyberChef | https://github.com/gchq/CyberChef/releases | tools\cyberchef\ |
+| HxD | https://mh-nexus.de/en/hxd/ | tools\hxd\ |
+| YARA | https://github.com/VirusTotal/yara/releases | tools\yara\ |
+| API Monitor | http://www.rohitab.com/apimonitor | tools\apimonitor\ |
+| Autoruns | https://learn.microsoft.com/sysinternals/downloads/autoruns | tools\autoruns\ |
+| Regshot | https://sourceforge.net/projects/regshot/ | tools\regshot\ |
+| TCPView | https://learn.microsoft.com/sysinternals/downloads/tcpview | tools\tcpview\ |
+| Process Hacker | https://processhacker.sourceforge.io/ | tools\processhacker\ |
+| Wireshark | https://www.wireshark.org/download.html | 標準インストール |
+
+### Go製ツールのビルド＆コピー
+
+ホスト側でビルドしてVMにコピー:
+
+```bash
+# vmrun-wrapper
+cd tools/vmware-sandbox/vmrun-wrapper
+GOOS=windows GOARCH=amd64 go build -o vmrun-wrapper.exe .
+
+# memdump-racer
+cd ../memdump-racer
+GOOS=windows GOARCH=amd64 go build -o memdump-racer.exe .
+
+# tiny-unpack
+cd ../tiny-unpack
+GOOS=windows GOARCH=amd64 go build -o tiny-unpack.exe .
+
+# decrypt-tool
+cd ../decrypt-tool
+GOOS=windows GOARCH=amd64 go build -o decrypt-tool.exe .
+
+# sandbox-evasion-check
+cd ../sandbox-evasion-check
+GOOS=windows GOARCH=amd64 go build -o sandbox-evasion-check.exe .
+
+# vm-detect-checker
+cd ../vm-detect-checker
+GOOS=windows GOARCH=amd64 go build -o vm-detect-checker.exe .
+```
+
+各 `.exe` を VM の `tools\` ディレクトリにコピー。
+
+### Frida オフラインインストール（任意）
+
+Host-Onlyモードではpipが使えないため、Frida wheelをオフラインで準備:
+
+```bash
+# ホスト側でwheelをダウンロード
+pip download frida-tools --platform win_amd64 --python-version 310 --only-binary=:all: -d frida_wheels/
+
+# VMにwheelディレクトリをコピー後、ゲスト内で:
+pip install --no-index --find-links=<wheel_dir> frida-tools
+```
+
+### TinyTracer セットアップ（Level 2 Unpacking用、任意）
+
+1. Intel PIN 3.31+ を `C:\pin` にインストール
+2. TinyTracer をコンパイルし `C:\pin\source\tools\TinyTracer\install\` に配置
+3. 管理者PowerShellで: `bcdedit /debug off` → 再起動
+
+## Step 4: FakeNet-NG CA証明書（HTTPS対応用、任意）
+
+HTTPS C2通信をキャプチャするために自己署名CA証明書を生成・インストール:
+
+```bash
+# ホスト側で生成
+openssl req -x509 -newkey rsa:2048 -keyout fakenet_ca.key -out fakenet_ca.crt \
+  -days 3650 -nodes -subj "/CN=FakeNet CA"
+openssl x509 -in fakenet_ca.crt -outform DER -out fakenet_ca.der
+```
+
+ゲスト内でCA証明書をインストール:
+```powershell
+# 管理者PowerShell
+Import-Certificate -FilePath "C:\path\to\fakenet_ca.der" -CertStoreLocation Cert:\LocalMachine\Root
+```
+
+## Step 5: スナップショット作成
+
+全ツールのインストールが完了したら:
+
+1. VMをシャットダウン
+2. ネットワークを **Host-Only** に変更
+3. VMを起動
+4. スナップショットを作成: 名前 = `clean_with_tools`
+
+このスナップショットが全解析のベースラインとなる。
+
+## Step 6: .env設定
+
+リポジトリルートの `.env` に以下を設定:
+
+```ini
+VMRUN_PATH=C:\Program Files (x86)\VMware\VMware Workstation\vmrun.exe
+VM_VMX_PATH=C:\path\to\your\VM.vmx
+VM_GUEST_USER=<guest_username>
+VM_GUEST_PASS=<guest_password>
+VM_GUEST_PROFILE=C:\Users\<guest_username>
+VM_SNAPSHOT=clean_with_tools
+VMRUN_TIMEOUT=30
+```
+
+## Step 7: 動作確認
+
+```bash
+# VM状態確認
+bash tools/vmware-sandbox/sandbox.sh status
+
+# VM起動
+bash tools/vmware-sandbox/sandbox.sh start
+
+# ゲストツール確認
+bash tools/vmware-sandbox/sandbox.sh guest-tools
+
+# ネットワーク隔離
+bash tools/vmware-sandbox/sandbox.sh net-isolate
+
+# ネットワーク状態確認
+bash tools/vmware-sandbox/sandbox.sh net-status
+```
+
+## 自動環境構築（初回スキル実行時）
+
+Claude Codeでvmware-sandboxスキルを初めて実行すると、sandbox.shが以下を自動チェック:
+
+1. `.env` の必須変数が設定されているか
+2. vmrunコマンドが実行可能か
+3. VMXファイルが存在するか
+4. スナップショットが存在するか
+
+不足があればユーザーに通知し、上記セットアップ手順を案内する。
+
+## トラブルシューティング
+
+### vmrunがハングする
+- vmrun-wrapperを使用（タイムアウト付き）
+- `sandbox.sh force-stop` でVMXプロセスを強制終了
+- `.lck` ファイルが残っている場合は手動削除
+
+### VMware Toolsが停止した
+- **VMware Toolsのサービスを停止・改名してはならない**（vmrun通信不可になる）
+- force-stop → スナップショット復帰で回復
+
+### ゲスト内でコマンドが動かない
+- `runScriptInGuest` を使用（`runProgramInGuest` よりも安定）
+- PowerShellは `-NoProfile -NonInteractive` を必ず付ける
+- 複雑なコマンドは `.ps1` ファイル経由で渡す
+
+### VM検知される
+- ユーザーフォルダ名にmalware関連の文字列を使わない
+- ディスクサイズ80GB+、RAM 4GB+ を確保
+- VMware Tools自体のVM検知は許容（停止すると通信不可になるため）
