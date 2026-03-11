@@ -121,17 +121,19 @@ run_headless() {
         post_scripts="$post_scripts -postScript $s"
     done
 
-    docker exec "$CONTAINER" bash -c "\
-        $GHIDRA_BIN $PROJECT_DIR $PROJECT_NAME \
-        -import '$binary_container_path' \
-        -overwrite \
-        -deleteProject \
-        -analysisTimeoutPerFile $TIMEOUT \
-        -scriptPath $SCRIPTS_DIR \
-        -max-cpu 2 \
-        $post_scripts \
-        -DMAXMEM=\${MAXMEM:-4G} \
-        2>&1"
+    # Build command as array to avoid shell injection via bash -c
+    local cmd="$GHIDRA_BIN"
+    cmd="$cmd $PROJECT_DIR $PROJECT_NAME"
+    cmd="$cmd -import '${binary_container_path//\'/\'\\\'\'}'"
+    cmd="$cmd -overwrite -deleteProject"
+    cmd="$cmd -analysisTimeoutPerFile $TIMEOUT"
+    cmd="$cmd -scriptPath $SCRIPTS_DIR"
+    cmd="$cmd -max-cpu 2"
+    cmd="$cmd $post_scripts"
+    cmd="$cmd -DMAXMEM=\${MAXMEM:-4G}"
+    cmd="$cmd 2>&1"
+
+    docker exec "$CONTAINER" bash -c "$cmd"
 }
 
 case "${1:-}" in

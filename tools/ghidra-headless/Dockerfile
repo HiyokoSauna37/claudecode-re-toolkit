@@ -30,13 +30,19 @@ COPY scripts/ /opt/ghidra-scripts/
 # Copy quarantine decryption script
 COPY decrypt_quarantine.py /opt/ghidra-scripts/decrypt_quarantine.py
 
+# Create non-root user for container security
+RUN addgroup -S ghidra && adduser -S ghidra -G ghidra
+
 # Create working directories
-RUN mkdir -p /analysis/input /analysis/output /analysis/projects
+RUN mkdir -p /analysis/input /analysis/output /analysis/projects && \
+    chown -R ghidra:ghidra /analysis /opt/ghidra-scripts
 
 WORKDIR /analysis
 
 ENV GHIDRA_HOME=/opt/ghidra \
     MAXMEM=4G
+
+USER ghidra
 
 # Keep container running
 CMD ["sleep", "infinity"]

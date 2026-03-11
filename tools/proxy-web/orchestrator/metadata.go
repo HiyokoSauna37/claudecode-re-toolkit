@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // Metadata represents the analysis output metadata.
@@ -93,9 +94,12 @@ func SaveNetworkCSV(entries []NetworkEntry, outputPath string) error {
 	// Rows
 	for _, e := range entries {
 		row := []string{
-			e.Timestamp, e.RequestID, e.Method, e.URL, e.Domain, e.DestinationIP,
-			e.StatusCode, e.ContentType, e.ContentLength, e.Referer, e.UserAgent,
-			e.SetCookie, e.Duration, e.RedirectTo, e.Description,
+			e.Timestamp, e.RequestID, e.Method,
+			sanitizeCSVField(e.URL), e.Domain, e.DestinationIP,
+			e.StatusCode, e.ContentType, e.ContentLength,
+			sanitizeCSVField(e.Referer), e.UserAgent,
+			sanitizeCSVField(e.SetCookie), e.Duration,
+			sanitizeCSVField(e.RedirectTo), e.Description,
 		}
 		if err := writer.Write(row); err != nil {
 			return err
@@ -103,4 +107,21 @@ func SaveNetworkCSV(entries []NetworkEntry, outputPath string) error {
 	}
 
 	return nil
+}
+
+// sanitizeCSVField prevents CSV injection by prefixing formula-triggering
+// characters with a single quote. Malicious URLs from analyzed sites could
+// contain Excel formula payloads (e.g., =cmd|'/c calc'!A1).
+func sanitizeCSVField(field string) string {
+	if len(field) == 0 {
+		return field
+	}
+	switch field[0] {
+	case '=', '+', '-', '@', '\t', '\r', '\n':
+		return "'" + field
+	}
+	if strings.HasPrefix(field, "0x09") || strings.HasPrefix(field, "0x0D") {
+		return "'" + field
+	}
+	return field
 }

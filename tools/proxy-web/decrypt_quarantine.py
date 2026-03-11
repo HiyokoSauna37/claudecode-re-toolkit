@@ -53,19 +53,16 @@ def main():
     parser.add_argument('encrypted_file', type=str, help='Path to encrypted file (.enc.gz)')
     parser.add_argument('-o', '--output', type=str, help='Output file path', default=None)
     parser.add_argument('-p', '--password', type=str, help='Decryption password (or use QUARANTINE_PASSWORD env)', default=None)
-    parser.add_argument('--force', action='store_true', help='Skip Docker environment check (debug only)')
 
     args = parser.parse_args()
 
     # Safety guard: refuse to run on host OS (must be inside Docker container)
-    if not args.force:
-        in_docker = os.path.exists("/.dockerenv") or os.environ.get("CONTAINER_ENV")
-        if not in_docker:
-            print("ERROR: This script must run inside a Docker container, not on the host OS.")
-            print("       Decrypting malware on the host is dangerous.")
-            print("       Use: docker exec ghidra-headless python3 /opt/ghidra-scripts/decrypt_quarantine.py ...")
-            print("       Or pass --force to override (debug only).")
-            sys.exit(1)
+    in_docker = os.path.exists("/.dockerenv") or os.environ.get("CONTAINER_ENV")
+    if not in_docker:
+        print("ERROR: This script must run inside a Docker container, not on the host OS.")
+        print("       Decrypting malware on the host is dangerous.")
+        print("       Use: docker exec ghidra-headless python3 /opt/ghidra-scripts/decrypt_quarantine.py ...")
+        sys.exit(1)
 
     # Get password
     password = args.password
