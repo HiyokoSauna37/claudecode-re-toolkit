@@ -11,6 +11,7 @@ Reverse engineering & malware analysis toolkit for [Claude Code](https://claude.
 | **proxy-web** | Safe access to malicious websites with full forensic capture | Docker (Chromium + Playwright) |
 | **ghidra-headless** | Automated static analysis with Ghidra (decompile, imports, strings, YARA, CAPA) | Docker (Ghidra 12.0.3) |
 | **vmware-sandbox** | Dynamic malware analysis with VMware VM (unpacking, Frida DBI, FakeNet) | VMware Workstation |
+| **toolkit-setup** | Interactive setup wizard for .env, Docker builds, YARA/CAPA, and VMware config | — |
 
 ## Architecture
 
@@ -43,6 +44,19 @@ Reverse engineering & malware analysis toolkit for [Claude Code](https://claude.
 - Python 3.10+
 
 ### Setup
+
+#### Automated (Recommended)
+
+```bash
+git clone https://github.com/HiyokoSauna37/claudecode-re-toolkit.git
+cd claudecode-re-toolkit
+claude
+# Then say: "setup" or "/toolkit-setup"
+```
+
+The **toolkit-setup** skill guides you through the entire setup interactively — .env creation, Docker image builds, YARA/CAPA installation, and VMware configuration. Choose between an interactive wizard (step-by-step) or batch mode (plan-then-execute).
+
+#### Manual
 
 ```bash
 # Clone
