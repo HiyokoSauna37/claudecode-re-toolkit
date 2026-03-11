@@ -11,6 +11,7 @@
 | **proxy-web** | 悪性Webサイトへの安全なアクセスとフォレンジックデータ取得 | Docker (Chromium + Playwright) |
 | **ghidra-headless** | Ghidra による自動静的解析（デコンパイル、インポート、文字列、YARA、CAPA） | Docker (Ghidra 12.0.3) |
 | **vmware-sandbox** | VMware VM を使ったマルウェア動的解析（アンパック、Frida DBI、FakeNet） | VMware Workstation |
+| **toolkit-setup** | .env作成、Dockerビルド、YARA/CAPA、VMware設定の対話型セットアップウィザード | — |
 
 ## アーキテクチャ
 
@@ -42,6 +43,19 @@
 - Python 3.10+
 
 ### セットアップ
+
+#### 自動セットアップ（推奨）
+
+```bash
+git clone https://github.com/HiyokoSauna37/claudecode-re-toolkit.git
+cd claudecode-re-toolkit
+claude
+# 「セットアップして」 または 「/toolkit-setup」 と入力
+```
+
+**toolkit-setup** スキルが .env 作成、Docker イメージビルド、YARA/CAPA インストール、VMware 設定までを対話的にガイドします。対話型ウィザード（1ステップずつ確認）と一括モード（計画提示→一気に実行）を選択可能。
+
+#### 手動セットアップ
 
 ```bash
 # クローン
