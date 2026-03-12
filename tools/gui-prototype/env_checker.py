@@ -79,34 +79,11 @@ def check_environment(repo_root: str) -> dict:
     else:
         result["claude_cli"] = {"status": "missing", "detail": "claude CLI not found"}
 
-    # Agent SDK
-    try:
-        import claude_code_sdk  # noqa: F401
-        result["agent_sdk"] = {"status": "ok", "detail": "claude-code-sdk installed"}
-    except ImportError:
-        try:
-            import claude_agent_sdk  # noqa: F401
-            result["agent_sdk"] = {"status": "ok", "detail": "claude-agent-sdk installed"}
-        except ImportError:
-            result["agent_sdk"] = {"status": "missing", "detail": "pip install claude-code-sdk"}
-
-    # ANTHROPIC_API_KEY
-    has_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
-    result["api_key"] = {
-        "status": "ok" if has_key else "missing",
-        "detail": "set" if has_key else "ANTHROPIC_API_KEY not set — subprocess mode only",
-    }
-
     # YARA rules
     yara_dir = root / "tools" / "ghidra-headless" / "yara-rules"
     if yara_dir.exists() and any(yara_dir.iterdir()):
         result["yara_rules"] = {"status": "ok", "detail": str(yara_dir)}
     else:
         result["yara_rules"] = {"status": "missing", "detail": "run setup_yara_rules.sh"}
-
-    # Determine backend mode
-    sdk_ok = result["agent_sdk"]["status"] == "ok"
-    key_ok = result["api_key"]["status"] == "ok"
-    result["backend_mode"] = "sdk" if (sdk_ok and key_ok) else "subprocess"
 
     return result

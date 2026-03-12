@@ -108,6 +108,29 @@ claude
 # "Run dynamic analysis on this packed binary" → vmware-sandbox
 ```
 
+## GUI Dashboard (Experimental)
+
+A web-based GUI dashboard is available as an experimental frontend for the toolkit. It provides a chat interface powered by Claude Code subprocess, with real-time tool activity monitoring, quarantine file browser, report viewer, and more.
+
+```bash
+cd tools/gui-prototype
+pip install fastapi uvicorn python-dotenv pyyaml
+python server.py
+# Open http://localhost:8765
+```
+
+**Features:**
+- Chat interface with Claude Code (streaming, session management)
+- Quarantine file browser with drag & drop analysis
+- Report viewer with Markdown rendering
+- Tool activity log with per-tool color coding
+- VM Live View (VMware screenshot streaming)
+- Pipeline indicator (Triage → Static → Dynamic → Report)
+- Command palette (Ctrl+K), keyboard shortcuts
+- Multiple themes (Default, Claude, Cyber, Arctic, Amethyst, Light)
+
+> **Note:** This is a prototype under active development. Some features may be unstable.
+
 ## Typical Workflow
 
 1. **Web Collection**: Use proxy-web to safely visit malicious URLs and collect artifacts
