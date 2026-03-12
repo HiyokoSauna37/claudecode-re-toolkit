@@ -112,6 +112,7 @@ claude
 ツールキットの Web ベース GUI ダッシュボードを実験的に提供しています。Claude Code のサブプロセスによるチャットインターフェースで、リアルタイムのツール活動モニタリング、Quarantine ファイルブラウザ、レポートビューアなどを備えています。
 
 ![GUI ダッシュボード](docs/gui-dashboard.png)
+![解析実行中](docs/gui-analysis.png)
 
 ```bash
 cd tools/gui-prototype

@@ -113,6 +113,7 @@ claude
 A web-based GUI dashboard is available as an experimental frontend for the toolkit. It provides a chat interface powered by Claude Code subprocess, with real-time tool activity monitoring, quarantine file browser, report viewer, and more.
 
 ![GUI Dashboard](docs/gui-dashboard.png)
+![Analysis in Progress](docs/gui-analysis.png)
 
 ```bash
 cd tools/gui-prototype
