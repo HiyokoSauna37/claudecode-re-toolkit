@@ -826,10 +826,13 @@ function handleMessage(msg) {
       if (state.currentPipelineStage) {
         completePipelineStage(state.currentPipelineStage);
       }
+      // Execute queued prompts
+      processPromptQueue();
       break;
     case "error":
       addErrorMsg(friendlyError(msg.message));
       setExecuting(false);
+      processPromptQueue();
       break;
   }
 }
@@ -1295,7 +1298,6 @@ async function pollVmScreenshot() {
 
 /* ── Execution ─────────────────────────────────── */
 function executePrompt() {
-  if (state.executing) return;
   if (!state.wsConnected) { addErrorMsg("Not connected"); return; }
 
   const input = document.getElementById("prompt-input");
@@ -1310,6 +1312,17 @@ function executePrompt() {
   state.promptHistory.push(prompt);
   if (state.promptHistory.length > 50) state.promptHistory.shift();
   state.historyIndex = -1;
+
+  // Queue follow-up if already executing
+  if (state.executing) {
+    addUserMsg(prompt);
+    state._pendingPrompts = state._pendingPrompts || [];
+    state._pendingPrompts.push(prompt);
+    input.value = "";
+    autoResizeTextarea(input);
+    showToast("Queued — will execute after current task", "info");
+    return;
+  }
 
   addUserMsg(prompt);
   highlightAnalyzingFile(prompt);
@@ -1332,13 +1345,31 @@ function executePrompt() {
 function cancelExecution() {
   state.ws.send(JSON.stringify({ type: "cancel" }));
   setExecuting(false);
+  state._pendingPrompts = [];
+}
+
+function processPromptQueue() {
+  if (!state._pendingPrompts?.length) return;
+  const next = state._pendingPrompts.shift();
+  // Small delay to let the UI settle
+  setTimeout(() => {
+    highlightAnalyzingFile(next);
+    setExecuting(true);
+    state.sessionToolCount = 0;
+    state.sessionStartTime = Date.now();
+    state.lastMessageTime = Date.now();
+    showSpinner();
+    showExecStatus();
+    state.execInterval = setInterval(updateExecStatus, 1000);
+    const claudeSessionId = currentSession().claudeSessionId || "";
+    state.ws.send(JSON.stringify({ type: "execute", prompt: next, session_id: claudeSessionId }));
+  }, 500);
 }
 
 function setExecuting(v) {
   state.executing = v;
-  document.getElementById("execute-btn").disabled = v;
+  document.getElementById("execute-btn").disabled = false;
   document.getElementById("cancel-btn").style.display = v ? "inline-block" : "none";
-  document.getElementById("prompt-input").disabled = v;
   if (!v) {
     document.getElementById("prompt-input").focus();
     finalizeAssistantMsg();

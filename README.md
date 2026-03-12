@@ -9,7 +9,7 @@ Reverse engineering & malware analysis toolkit for [Claude Code](https://claude.
 | Skill | Description | Backend |
 |-------|-------------|---------|
 | **proxy-web** | Safe access to malicious websites with full forensic capture | Docker (Chromium + Playwright) |
-| **ghidra-headless** | Automated static analysis with Ghidra (decompile, imports, strings, YARA, CAPA) | Docker (Ghidra 12.0.3) |
+| **ghidra-headless** | Automated static analysis with Ghidra (decompile, imports, strings, YARA, CAPA) | Docker (Ghidra 12.0.3 + Kali/radare2) |
 | **vmware-sandbox** | Dynamic malware analysis with VMware VM (unpacking, Frida DBI, FakeNet) | VMware Workstation |
 | **toolkit-setup** | Interactive setup wizard for .env, Docker builds, YARA/CAPA, and VMware config | — |
 
@@ -167,6 +167,7 @@ Docker-based Ghidra automation:
 - Mandiant CAPA capability analysis with MITRE ATT&CK mapping
 - IOC extraction (IP, domain, URL, hash, registry keys)
 - Malware classification (InfoStealer, Ransomware, RAT, Dropper, Loader, Worm)
+- Kali Linux container with radare2 for quick triage, entropy analysis, crypto detection, and binary diffing
 
 ### vmware-sandbox
 

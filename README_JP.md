@@ -9,7 +9,7 @@
 | スキル | 概要 | バックエンド |
 |--------|------|-------------|
 | **proxy-web** | 悪性Webサイトへの安全なアクセスとフォレンジックデータ取得 | Docker (Chromium + Playwright) |
-| **ghidra-headless** | Ghidra による自動静的解析（デコンパイル、インポート、文字列、YARA、CAPA） | Docker (Ghidra 12.0.3) |
+| **ghidra-headless** | Ghidra による自動静的解析（デコンパイル、インポート、文字列、YARA、CAPA） | Docker (Ghidra 12.0.3 + Kali/radare2) |
 | **vmware-sandbox** | VMware VM を使ったマルウェア動的解析（アンパック、Frida DBI、FakeNet） | VMware Workstation |
 | **toolkit-setup** | .env作成、Dockerビルド、YARA/CAPA、VMware設定の対話型セットアップウィザード | — |
 
@@ -166,6 +166,7 @@ Docker ベースの Ghidra 自動解析:
 - Mandiant CAPA によるケイパビリティ分析 + MITRE ATT&CK マッピング
 - IOC 自動抽出（IP、ドメイン、URL、ハッシュ、レジストリキー）
 - マルウェア種別自動分類（InfoStealer、Ransomware、RAT、Dropper、Loader、Worm）
+- Kali Linux コンテナの radare2 による高速トリアージ、エントロピー分析、暗号定数検出、バイナリ差分比較
 
 ### vmware-sandbox
 
