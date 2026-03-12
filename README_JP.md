@@ -107,6 +107,31 @@ claude
 # 「このパック済みバイナリを動的解析して」 → vmware-sandbox
 ```
 
+## GUI ダッシュボード（実験的）
+
+ツールキットの Web ベース GUI ダッシュボードを実験的に提供しています。Claude Code のサブプロセスによるチャットインターフェースで、リアルタイムのツール活動モニタリング、Quarantine ファイルブラウザ、レポートビューアなどを備えています。
+
+![GUI ダッシュボード](docs/gui-dashboard.png)
+
+```bash
+cd tools/gui-prototype
+pip install fastapi uvicorn python-dotenv pyyaml
+python server.py
+# http://localhost:8765 を開く
+```
+
+**主な機能:**
+- Claude Code とのチャットインターフェース（ストリーミング、セッション管理）
+- Quarantine ファイルブラウザ（ドラッグ&ドロップで解析指示）
+- Markdown 対応レポートビューア
+- ツール別カラーコード付きアクティビティログ
+- VM Live View（VMware スクリーンショットストリーミング）
+- パイプラインインジケーター（Triage → Static → Dynamic → Report）
+- コマンドパレット（Ctrl+K）、キーボードショートカット
+- 複数テーマ（Default、Claude、Cyber、Arctic、Amethyst、Light）
+
+> **注意:** 開発中のプロトタイプです。一部の機能が不安定な場合があります。
+
 ## 典型的なワークフロー
 
 1. **Web収集**: proxy-web で悪性URLに安全にアクセスし、アーティファクトを取得
