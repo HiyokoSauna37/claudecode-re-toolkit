@@ -1,157 +1,49 @@
-"""Claude backend abstraction — SDK or subprocess mode."""
+"""Claude backend — subprocess mode using claude -p."""
 
 import asyncio
 import json
 import os
-import sys
 from pathlib import Path
 from typing import AsyncIterator
 
 
 class ClaudeBackend:
-    """Unified async streaming interface for Claude Code execution."""
+    """Async streaming interface for Claude Code via subprocess."""
 
-    def __init__(self, repo_root: str, mode: str = "auto"):
+    def __init__(self, repo_root: str):
         self.repo_root = str(Path(repo_root).resolve())
-        self._mode = mode
         self._process: asyncio.subprocess.Process | None = None
 
-        if mode == "auto":
-            self._mode = self._detect_mode()
+    SAFETY_PREFIX = (
+        "[SYSTEM RULE — ABSOLUTE] "
+        "ホストOS上でマルウェアを復号化・展開しないこと。"
+        "暗号化ファイル(.enc.gz)はそのままDockerコンテナまたはVM内にコピーし、内部で復号すること。"
+        "ホスト上に生のマルウェアバイナリを保存するBashコマンドを実行してはならない。"
+        "docker cpでコンテナ内からホストへマルウェアをコピーしてはならない。"
+        "解析結果（テキスト/JSON）のみホストに保存すること。\n\n"
+    )
 
-    @property
-    def mode(self) -> str:
-        return self._mode
+    async def execute(self, prompt: str, session_id: str = "") -> AsyncIterator[dict]:
+        """Execute a prompt and yield normalized message dicts.
 
-    @mode.setter
-    def mode(self, value: str):
-        if value in ("sdk", "subprocess"):
-            self._mode = value
-
-    def _detect_mode(self) -> str:
-        """Detect best available mode."""
-        if not os.environ.get("ANTHROPIC_API_KEY"):
-            return "subprocess"
-        try:
-            import claude_code_sdk  # noqa: F401
-            return "sdk"
-        except ImportError:
-            try:
-                import claude_agent_sdk  # noqa: F401
-                return "sdk"
-            except ImportError:
-                return "subprocess"
-
-    async def execute(self, prompt: str) -> AsyncIterator[dict]:
-        """Execute a prompt and yield normalized message dicts."""
-        if self._mode == "sdk":
-            async for msg in self._execute_sdk(prompt):
-                yield msg
-        else:
-            async for msg in self._execute_subprocess(prompt):
-                yield msg
-
-    async def cancel(self):
-        """Cancel current execution."""
-        if self._process and self._process.returncode is None:
-            try:
-                self._process.terminate()
-            except ProcessLookupError:
-                pass
-
-    # ── SDK mode ──────────────────────────────────────────
-
-    async def _execute_sdk(self, prompt: str) -> AsyncIterator[dict]:
-        """Execute via Claude Agent SDK."""
-        try:
-            # Try both package names
-            try:
-                from claude_code_sdk import query as sdk_query
-                from claude_code_sdk import ClaudeCodeOptions
-                options_cls = ClaudeCodeOptions
-            except ImportError:
-                from claude_agent_sdk import query as sdk_query
-                from claude_agent_sdk import ClaudeAgentOptions
-                options_cls = ClaudeAgentOptions
-
-            options = options_cls(
-                cwd=self.repo_root,
-                allowed_tools=[
-                    "Bash", "Read", "Write", "Edit", "Glob", "Grep",
-                    "Skill", "Agent", "WebFetch", "WebSearch",
-                ],
-                permission_mode="acceptEdits",
-                max_turns=30,
-            )
-
-            yield {"type": "system", "subtype": "start", "data": {"mode": "sdk"}}
-
-            async for message in sdk_query(prompt=prompt, options=options):
-                # Normalize SDK message types
-                for normalized in self._normalize_sdk_message(message):
-                    yield normalized
-
-        except Exception as e:
-            yield {"type": "error", "message": f"SDK error: {e}"}
-
-    def _normalize_sdk_message(self, message) -> list[dict]:
-        """Convert SDK message to normalized format."""
-        results = []
-        msg_type = getattr(message, "type", None) or type(message).__name__
-
-        if msg_type == "assistant":
-            content = getattr(message, "content", [])
-            if isinstance(content, str):
-                results.append({"type": "text", "content": content})
-            elif isinstance(content, list):
-                for block in content:
-                    block_type = getattr(block, "type", None)
-                    if block_type == "text":
-                        results.append({"type": "text", "content": block.text})
-                    elif block_type == "tool_use":
-                        results.append({
-                            "type": "tool_use",
-                            "name": block.name,
-                            "input": block.input if isinstance(block.input, dict) else str(block.input),
-                            "id": getattr(block, "id", ""),
-                        })
-        elif msg_type == "user":
-            content = getattr(message, "content", [])
-            if isinstance(content, list):
-                for block in content:
-                    block_type = getattr(block, "type", None)
-                    if block_type == "tool_result":
-                        text = getattr(block, "content", "")
-                        if isinstance(text, list):
-                            text = " ".join(
-                                getattr(b, "text", str(b)) for b in text
-                            )
-                        results.append({
-                            "type": "tool_result",
-                            "tool_use_id": getattr(block, "tool_use_id", ""),
-                            "content": str(text)[:2000],
-                            "is_error": getattr(block, "is_error", False),
-                        })
-        elif msg_type == "result":
-            results.append({
-                "type": "result",
-                "cost_usd": getattr(message, "cost_usd", 0),
-                "duration_ms": getattr(message, "duration_ms", 0),
-                "session_id": getattr(message, "session_id", ""),
-            })
-
-        return results
-
-    # ── Subprocess mode ───────────────────────────────────
-
-    async def _execute_subprocess(self, prompt: str) -> AsyncIterator[dict]:
-        """Execute via claude -p subprocess."""
+        Args:
+            prompt: The user prompt.
+            session_id: Claude Code session ID. If provided, resumes that session.
+        """
+        safe_prompt = self.SAFETY_PREFIX + prompt
         cmd = [
-            "claude", "-p", prompt,
+            "claude", "-p", safe_prompt,
             "--output-format", "stream-json",
             "--verbose",
             "--max-turns", "30",
+            "--permission-mode", "bypassPermissions",
+            "--allowedTools", "Bash", "Read", "Glob", "Grep",
+            "WebFetch", "WebSearch", "Skill", "Agent",
         ]
+
+        # Resume existing session if session_id is provided
+        if session_id:
+            cmd.extend(["--resume", session_id])
 
         env = os.environ.copy()
         # Prevent nested session error
@@ -167,6 +59,7 @@ class ClaudeBackend:
                 stderr=asyncio.subprocess.PIPE,
                 cwd=self.repo_root,
                 env=env,
+                limit=10 * 1024 * 1024,  # 10 MB line buffer for large tool results
             )
 
             async for msg in self._read_stream_json(self._process.stdout):
@@ -187,10 +80,25 @@ class ClaudeBackend:
         finally:
             self._process = None
 
+    async def cancel(self):
+        """Cancel current execution."""
+        if self._process and self._process.returncode is None:
+            try:
+                self._process.terminate()
+            except ProcessLookupError:
+                pass
+
     async def _read_stream_json(self, stream) -> AsyncIterator[dict]:
         """Parse stream-json (NDJSON) output from claude -p."""
         while True:
-            line_bytes = await stream.readline()
+            try:
+                line_bytes = await stream.readline()
+            except ValueError:
+                # Line exceeds buffer limit — read and discard the chunk
+                chunk = await stream.read(65536)
+                if not chunk:
+                    break
+                continue
             if not line_bytes:
                 break
             line = line_bytes.decode(errors="replace").strip()

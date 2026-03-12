@@ -7,6 +7,9 @@ instructions: |
   2. 停止中なら起動: bash tools/ghidra-headless/ghidra.sh start
   3. ユーザーに「解析対象のバイナリパスを教えてください」と質問
   4. 指示に応じて解析コマンドを構築・実行
+     **重要: .enc.gzファイルは全コマンドで直接渡せる。ghidra.shが自動検知してコンテナ内で復号する。**
+     **ホスト上で復号化スクリプト(decrypt_quarantine.py等)を実行してはならない。**
+     **ホスト上にopenssl/gunzip等で復号してはならない。**
   5. 結果をユーザーに報告し、次の指示を待つ
   6. 「終了」「exit」で解析セッション終了 → ログファイルをgit commit & push
 
@@ -239,48 +242,48 @@ Date: YYYY-MM-DD
 - ...
 ```
 
-## 解析レポートの保存先
+## 解析レポートの保存先（厳守）
 
-解析レポート（Markdown）は以下に配置:
+**重要: レポートは必ず以下のパスに保存すること。他の場所（notes/ 等）には絶対に保存しない。**
+
 ```
-reports/ghidra-headless/YYYYMMDD_<target_name>.md
+reports/YYYYMMDD_<target_name>.md
 ```
+
+- **保存先: `reports/` ディレクトリ直下**（サブディレクトリは作らない）
+- notes/ や notes/ghidra-headless/ には保存しない（過去に誤出力あり）
 - proxy-web経由の場合、DL元URL・ランディングページ・VT結果など取得時の情報を必ずレポートに含める
 - `tools/ghidra-headless/output/` には生の解析出力（テキスト/デコンパイル結果）を保存
-- `reports/ghidra-headless/` にはそれをまとめた人間向けレポートを保存
+- `reports/` にはそれをまとめた人間向けレポートを保存
 
 ## proxy-webで取得したファイルの解析手順
 
-proxy-webで隔離されたEXE/DLL等のバイナリを解析する手順:
-
 **!! 最重要: ローカル（ホストOS）上で絶対に復号化しないこと !!**
-マルウェアの可能性があるファイルは、暗号化された状態のままDockerコンテナにコピーし、コンテナ内で復号化する。
-- `decrypt_quarantine.py`をホストで実行禁止（Docker環境ガードが自動拒否する）
-- `decrypt_quarantine.ps1`等のPS1復号スクリプトもホストで実行禁止
-- 暗号化ファイル(.enc.gz)はそのままコンテナ/VM内に転送→内部で復号する
-- この規則違反はユーザーから繰り返し指摘されている。**絶対に破らないこと**
 
-### 推奨: quarantine-analyze ワンコマンド（v2）
+### .enc.gz ファイルの解析方法（全コマンド対応）
 
-```bash
-# 復号化 → フル解析 → クリーンアップを一括実行
-bash tools/ghidra-headless/ghidra.sh quarantine-analyze "tools/proxy-web/Quarantine/<domain>/<timestamp>/<file>.enc.gz"
-```
-
-- 暗号化ファイルをコンテナの `/tmp/` にコピー（bind mountではなくコンテナネイティブFS）
-- `.env` から `QUARANTINE_PASSWORD` を自動読み取り
-- コンテナ内蔵の `decrypt_quarantine.py` で復号化
-- Ghidra全解析（info/functions/imports/exports/strings/xrefs）実行
-- 解析後に復号済みバイナリを自動削除
-- 結果は `tools/ghidra-headless/output/` に保存
-
-### 復号化のみ
+**全てのghidra.shコマンドが .enc.gz を直接受け付ける。** ghidra.shが自動で：
+1. 暗号化ファイルをコンテナの `/tmp/` にコピー
+2. `.env` の `QUARANTINE_PASSWORD` でコンテナ内復号
+3. 解析実行
+4. 復号済みバイナリを自動削除
 
 ```bash
-# 復号化だけしてコンテナ内にバイナリを残す（手動解析用）
-bash tools/ghidra-headless/ghidra.sh decrypt "tools/proxy-web/Quarantine/<domain>/<timestamp>/<file>.enc.gz"
-# → コンテナ内 /tmp/<filename> に復号済みバイナリが配置される
+# .enc.gz をそのまま渡すだけ（全コマンドで同じ）
+bash tools/ghidra-headless/ghidra.sh analyze "tools/proxy-web/Quarantine/<domain>/<timestamp>/<file>.enc.gz"
+bash tools/ghidra-headless/ghidra.sh info "tools/proxy-web/Quarantine/<domain>/<timestamp>/<file>.enc.gz"
+bash tools/ghidra-headless/ghidra.sh imports "tools/proxy-web/Quarantine/<domain>/<timestamp>/<file>.enc.gz"
+bash tools/ghidra-headless/ghidra.sh strings "tools/proxy-web/Quarantine/<domain>/<timestamp>/<file>.enc.gz"
+bash tools/ghidra-headless/ghidra.sh analyze-full "tools/proxy-web/Quarantine/<domain>/<timestamp>/<file>.enc.gz"
+bash tools/ghidra-headless/ghidra.sh yara-scan "tools/proxy-web/Quarantine/<domain>/<timestamp>/<file>.enc.gz"
+bash tools/ghidra-headless/ghidra.sh capa "tools/proxy-web/Quarantine/<domain>/<timestamp>/<file>.enc.gz"
 ```
+
+**禁止事項（ユーザーから繰り返し指摘されている。絶対に破らないこと）:**
+- `decrypt_quarantine.py` をホストで実行禁止
+- `openssl`/`gunzip`/`python3 -c` 等でホスト上で復号禁止
+- `docker cp` でコンテナから復号済みバイナリをホストにコピー禁止
+- 上記のような手動復号手順は一切不要。ghidra.shに .enc.gz を渡すだけ
 
 ### quarantine CLIツール（Go）
 
@@ -297,29 +300,6 @@ bash tools/ghidra-headless/ghidra.sh decrypt "tools/proxy-web/Quarantine/<domain
 
 # 復号化 + Ghidra解析を実行
 ./tools/quarantine/quarantine.exe analyze 1
-```
-
-### 手動手順（レガシー / トラブル時のフォールバック）
-
-```bash
-# 1. 暗号化されたままコンテナの /tmp/ へ転送（!! /analysis/input/ ではなく /tmp/ を使うこと !!）
-docker cp "tools/proxy-web/Quarantine/<domain>/<timestamp>/<encrypted_file>" ghidra-headless:/tmp/
-
-# 2. コンテナ内で復号化（decrypt_quarantine.pyはDockerイメージに内蔵済み）
-docker exec -e QUARANTINE_PASSWORD="<password>" ghidra-headless \
-    python3 /opt/ghidra-scripts/decrypt_quarantine.py /tmp/<encrypted_file>
-
-# 3. Ghidra解析（/tmp/ のファイルを直接指定）
-# ghidra.shのrun_headlessは docker exec 経由で実行するため、コンテナ内パスを渡す
-docker exec ghidra-headless bash -c \
-    "/opt/ghidra/support/analyzeHeadless /analysis/projects tmp_project \
-    -import '/tmp/<decrypted_binary>' -overwrite -deleteProject \
-    -analysisTimeoutPerFile 300 -scriptPath /opt/ghidra-scripts -max-cpu 2 \
-    -postScript binary_info.py -postScript list_imports.py -postScript extract_strings.py \
-    2>&1"
-
-# 4. クリーンアップ
-docker exec ghidra-headless rm -f /tmp/<decrypted_binary> /tmp/<encrypted_file>
 ```
 
 ## Knowledge Base

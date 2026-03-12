@@ -8,6 +8,12 @@ set -eo pipefail
 export MSYS_NO_PATHCONV=1
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# On MSYS/Git Bash, convert SCRIPT_DIR to Windows path for host tools (python3, etc.)
+if command -v cygpath &>/dev/null; then
+    SCRIPT_DIR_WIN="$(cygpath -w "$SCRIPT_DIR")"
+else
+    SCRIPT_DIR_WIN="$SCRIPT_DIR"
+fi
 COMPOSE_FILE="$SCRIPT_DIR/docker-compose.yml"
 CONTAINER="ghidra-headless"
 GHIDRA_BIN="/opt/ghidra/support/analyzeHeadless"
@@ -17,6 +23,9 @@ PROJECT_NAME="tmp_project"
 TIMEOUT=300
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 ENV_FILE="$REPO_ROOT/.env"
+
+# Track container-side temp files for cleanup
+_CONTAINER_CLEANUP=""
 
 compose() {
     docker compose -f "$COMPOSE_FILE" "$@"
@@ -30,30 +39,6 @@ ensure_running() {
         compose up -d --build
         sleep 3
     fi
-}
-
-# Copy binary from host to container input dir, return container-side path
-prepare_binary() {
-    local binary_path="$1"
-    if [ -z "$binary_path" ]; then
-        echo "Error: No binary specified" >&2
-        return 1
-    fi
-
-    local basename
-    basename=$(basename "$binary_path")
-
-    # Copy to input/ on host side (which is mounted to /analysis/input)
-    if [ -f "$binary_path" ]; then
-        cp "$binary_path" "$SCRIPT_DIR/input/$basename"
-    elif [ -f "$SCRIPT_DIR/input/$basename" ]; then
-        : # Already in input dir
-    else
-        echo "Error: File not found: $binary_path" >&2
-        return 1
-    fi
-
-    echo "/analysis/input/$basename"
 }
 
 # Decrypt quarantine file inside container (/tmp/, not bind mount)
@@ -85,19 +70,28 @@ decrypt_in_container() {
     local dec_basename="${enc_basename%.enc.gz}"
 
     echo "[*] Copying encrypted file to container /tmp/..." >&2
-    docker cp "$encrypted_path" "$CONTAINER:/tmp/$enc_basename"
+    # MSYS_NO_PATHCONV=1 prevents Git Bash from converting container paths like /tmp/... to Windows paths
+    MSYS_NO_PATHCONV=1 docker cp "$encrypted_path" "$CONTAINER:/tmp/$enc_basename"
 
-    echo "[*] Decrypting inside container..." >&2
-    docker exec -e QUARANTINE_PASSWORD="$password" "$CONTAINER" \
-        python3 /opt/ghidra-scripts/decrypt_quarantine.py "/tmp/$enc_basename" -o "/tmp/$dec_basename" >&2
+    echo "[*] Decrypting inside container (host never sees raw binary)..." >&2
+    # Pass paths via env vars to avoid MSYS/Git Bash path conversion on Windows
+    MSYS_NO_PATHCONV=1 docker exec \
+        -e QUARANTINE_PASSWORD="$password" \
+        -e ENC_PATH="/tmp/$enc_basename" \
+        -e DEC_PATH="/tmp/$dec_basename" \
+        "$CONTAINER" \
+        bash -c 'python3 /opt/ghidra-scripts/decrypt_quarantine.py "$ENC_PATH" -o "$DEC_PATH"' >&2
 
     if [ $? -ne 0 ]; then
         echo "Error: Decryption failed" >&2
         return 1
     fi
 
-    # Clean up encrypted file
-    docker exec "$CONTAINER" rm -f "/tmp/$enc_basename"
+    # Clean up encrypted file from container
+    MSYS_NO_PATHCONV=1 docker exec "$CONTAINER" rm -f "/tmp/$enc_basename"
+
+    # Register for cleanup after analysis
+    _CONTAINER_CLEANUP="/tmp/$dec_basename"
 
     echo "/tmp/$dec_basename"
 }
@@ -107,7 +101,57 @@ cleanup_container() {
     local container_path="$1"
     if [ -n "$container_path" ] && [[ "$container_path" == /tmp/* ]]; then
         echo "[*] Cleaning up decrypted file from container..."
-        docker exec "$CONTAINER" rm -f "$container_path"
+        docker exec "$CONTAINER" rm -f "/${container_path}" 2>/dev/null || true
+    fi
+}
+
+# Smart binary preparation: auto-detects .enc.gz and routes through container-only decryption
+# For .enc.gz: decrypt inside container, return /tmp/<name> (container path)
+# For plain files: copy to input/ bind mount, return /analysis/input/<name>
+# Sets _CONTAINER_CLEANUP for auto-cleanup
+prepare_binary() {
+    local binary_path="$1"
+    if [ -z "$binary_path" ]; then
+        echo "Error: No binary specified" >&2
+        return 1
+    fi
+
+    _CONTAINER_CLEANUP=""
+
+    # Auto-detect encrypted quarantine files
+    if [[ "$binary_path" == *.enc.gz ]]; then
+        echo "[!] Detected .enc.gz file → decrypting INSIDE container (not on host)" >&2
+        local container_path
+        container_path=$(decrypt_in_container "$binary_path")
+        if [ $? -ne 0 ]; then
+            echo "Error: Decryption failed" >&2
+            return 1
+        fi
+        echo "$container_path"
+        return 0
+    fi
+
+    # Plain binary: copy to input/ mount
+    local basename
+    basename=$(basename "$binary_path")
+
+    if [ -f "$binary_path" ]; then
+        cp "$binary_path" "$SCRIPT_DIR/input/$basename"
+    elif [ -f "$SCRIPT_DIR/input/$basename" ]; then
+        : # Already in input dir
+    else
+        echo "Error: File not found: $binary_path" >&2
+        return 1
+    fi
+
+    echo "/analysis/input/$basename"
+}
+
+# Auto-cleanup after analysis
+auto_cleanup() {
+    if [ -n "$_CONTAINER_CLEANUP" ]; then
+        cleanup_container "$_CONTAINER_CLEANUP"
+        _CONTAINER_CLEANUP=""
     fi
 }
 
@@ -136,6 +180,47 @@ run_headless() {
     docker exec "$CONTAINER" bash -c "$cmd"
 }
 
+# Run YARA scan inside container for .enc.gz files (no host extraction)
+yara_scan_in_container() {
+    local container_path="$1"
+    echo "[*] Running YARA scan inside container..." >&2
+
+    # Install yara in container if needed, then run
+    docker exec "$CONTAINER" bash -c "
+        if ! command -v yara &>/dev/null && pip3 install yara-python &>/dev/null; then
+            echo '[*] Installed yara-python in container'
+        fi
+        python3 //opt/ghidra-scripts/decrypt_quarantine.py --version 2>/dev/null || true
+    " >&2 2>/dev/null || true
+
+    # Copy yara_scanner.py and rules to container, run there
+    # Use SCRIPT_DIR_WIN for docker cp (MSYS paths cause GetFileAttributesEx errors)
+    docker cp "$SCRIPT_DIR_WIN/yara_scanner.py" "$CONTAINER:/tmp/yara_scanner.py"
+    if [ -d "$SCRIPT_DIR/yara-rules" ]; then
+        docker exec "$CONTAINER" mkdir -p //tmp/yara-rules 2>/dev/null || true
+        docker cp "$SCRIPT_DIR_WIN/yara-rules/." "$CONTAINER:/tmp/yara-rules/"
+    fi
+    # Pass container_path via env var to avoid MSYS/Git Bash path conversion
+    docker exec -e SCAN_TARGET="$container_path" "$CONTAINER" \
+        bash -c 'python3 /tmp/yara_scanner.py "$SCAN_TARGET" --output-dir /analysis/output' 2>&1 || echo "  YARA scan completed with warnings"
+    # Copy results back to host output
+    docker cp "$CONTAINER:/analysis/output/." "$SCRIPT_DIR_WIN/output/" 2>/dev/null || true
+}
+
+# Run CAPA inside container for .enc.gz files (no host extraction)
+capa_scan_in_container() {
+    local container_path="$1"
+    echo "[*] Running CAPA inside container..." >&2
+
+    # Use SCRIPT_DIR_WIN for docker cp (MSYS paths cause GetFileAttributesEx errors)
+    docker cp "$SCRIPT_DIR_WIN/capa_scanner.py" "$CONTAINER:/tmp/capa_scanner.py"
+    docker exec "$CONTAINER" bash -c "
+        pip3 install flare-capa 2>/dev/null || true
+        python3 /tmp/capa_scanner.py '$container_path' --output-dir /analysis/output
+    " 2>&1 || echo "  CAPA analysis completed with warnings"
+    docker cp "$CONTAINER:/analysis/output/." "$SCRIPT_DIR_WIN/output/" 2>/dev/null || true
+}
+
 case "${1:-}" in
     start)
         compose up -d --build
@@ -150,7 +235,7 @@ case "${1:-}" in
         ;;
     analyze)
         if [ -z "$2" ]; then
-            echo "Usage: ghidra.sh analyze <binary>"
+            echo "Usage: ghidra.sh analyze <binary|encrypted.enc.gz>"
             exit 1
         fi
         ensure_running
@@ -164,70 +249,78 @@ case "${1:-}" in
             extract_strings.py \
             decompile_all.py \
             xrefs_report.py
+        auto_cleanup
         echo "=== Results in: $SCRIPT_DIR/output/ ==="
         ;;
     info)
         if [ -z "$2" ]; then
-            echo "Usage: ghidra.sh info <binary>"
+            echo "Usage: ghidra.sh info <binary|encrypted.enc.gz>"
             exit 1
         fi
         ensure_running
         BINARY=$(prepare_binary "$2") || exit 1
         run_headless "$BINARY" binary_info.py
+        auto_cleanup
         ;;
     decompile)
         if [ -z "$2" ]; then
-            echo "Usage: ghidra.sh decompile <binary>"
+            echo "Usage: ghidra.sh decompile <binary|encrypted.enc.gz>"
             exit 1
         fi
         ensure_running
         BINARY=$(prepare_binary "$2") || exit 1
         run_headless "$BINARY" decompile_all.py
+        auto_cleanup
         ;;
     functions)
         if [ -z "$2" ]; then
-            echo "Usage: ghidra.sh functions <binary>"
+            echo "Usage: ghidra.sh functions <binary|encrypted.enc.gz>"
             exit 1
         fi
         ensure_running
         BINARY=$(prepare_binary "$2") || exit 1
         run_headless "$BINARY" list_functions.py
+        auto_cleanup
         ;;
     strings)
         if [ -z "$2" ]; then
-            echo "Usage: ghidra.sh strings <binary>"
+            echo "Usage: ghidra.sh strings <binary|encrypted.enc.gz>"
             exit 1
         fi
         ensure_running
         BINARY=$(prepare_binary "$2") || exit 1
         run_headless "$BINARY" extract_strings.py
+        auto_cleanup
         ;;
     imports)
         if [ -z "$2" ]; then
-            echo "Usage: ghidra.sh imports <binary>"
+            echo "Usage: ghidra.sh imports <binary|encrypted.enc.gz>"
             exit 1
         fi
         ensure_running
         BINARY=$(prepare_binary "$2") || exit 1
         run_headless "$BINARY" list_imports.py
+        auto_cleanup
         ;;
     exports)
         if [ -z "$2" ]; then
-            echo "Usage: ghidra.sh exports <binary>"
+            echo "Usage: ghidra.sh exports <binary|encrypted.enc.gz>"
             exit 1
         fi
         ensure_running
         BINARY=$(prepare_binary "$2") || exit 1
         run_headless "$BINARY" list_exports.py
+        auto_cleanup
         ;;
     xrefs)
         if [ -z "$2" ]; then
-            echo "Usage: ghidra.sh xrefs <binary>"
+            echo "Usage: ghidra.sh xrefs <binary|encrypted.enc.gz>"
             exit 1
         fi
         ensure_running
         BINARY=$(prepare_binary "$2") || exit 1
         run_headless "$BINARY" xrefs_report.py
+        auto_cleanup
         ;;
     decrypt)
         if [ -z "$2" ]; then
@@ -247,94 +340,68 @@ case "${1:-}" in
         fi
         ensure_running
         echo "=== Quarantine Analysis: $(basename "$2") ==="
-        DECRYPTED=$(decrypt_in_container "$2")
-        if [ $? -ne 0 ]; then
-            echo "Error: Decryption failed. Aborting analysis."
-            exit 1
-        fi
-        echo "=== Running Ghidra analysis on: $DECRYPTED ==="
-        run_headless "$DECRYPTED" \
+        BINARY=$(prepare_binary "$2") || exit 1
+        echo "=== Running Ghidra analysis on: $BINARY ==="
+        run_headless "$BINARY" \
             binary_info.py \
             list_functions.py \
             list_imports.py \
             list_exports.py \
             extract_strings.py \
             xrefs_report.py
-        cleanup_container "$DECRYPTED"
+        auto_cleanup
         echo "=== Results in: $SCRIPT_DIR/output/ ==="
         ;;
     yara-scan)
         if [ -z "$2" ]; then
             echo "Usage: ghidra.sh yara-scan <binary|encrypted.enc.gz>"
             echo "  Scans raw binary with YARA rules (APT attribution, malware family)"
-            echo "  Supports .enc.gz quarantine files (auto-decrypt in container)"
+            echo "  .enc.gz files: scanned inside container (no host extraction)"
             exit 1
         fi
-        SCAN_TARGET="$2"
-        YARA_CLEANUP=""
+        echo "=== YARA Scan: $(basename "$2") ==="
         if [[ "$2" == *.enc.gz ]]; then
-            echo "[*] Detected .enc.gz file, decrypting in container for YARA scan..."
             ensure_running
-            SCAN_TARGET=$(decrypt_in_container "$2")
+            CONTAINER_PATH=$(decrypt_in_container "$2")
             if [ $? -ne 0 ]; then
                 echo "Error: Decryption failed. Aborting YARA scan."
                 exit 1
             fi
-            YARA_CLEANUP="$SCAN_TARGET"
-            # Extract from container to temp dir for host-side YARA scan
-            local tmp_dir
-            tmp_dir=$(mktemp -d)
-            local dec_name
-            dec_name=$(basename "$SCAN_TARGET")
-            docker cp "$CONTAINER:$SCAN_TARGET" "$tmp_dir/$dec_name"
-            SCAN_TARGET="$tmp_dir/$dec_name"
-            YARA_CLEANUP_HOST="$tmp_dir"
-        fi
-        echo "=== YARA Scan: $(basename "$SCAN_TARGET") ==="
-        python3 "$SCRIPT_DIR/yara_scanner.py" "$SCAN_TARGET" --output-dir "$SCRIPT_DIR/output"
-        # Cleanup
-        if [ -n "$YARA_CLEANUP" ]; then
-            cleanup_container "$YARA_CLEANUP"
-        fi
-        if [ -n "${YARA_CLEANUP_HOST:-}" ]; then
-            rm -rf "$YARA_CLEANUP_HOST"
+            yara_scan_in_container "$CONTAINER_PATH"
+            cleanup_container "$CONTAINER_PATH"
+        else
+            # Plain binary: run on host
+            if command -v cygpath &>/dev/null; then
+                python3 "$(cygpath -w "$SCRIPT_DIR/yara_scanner.py")" "$(cygpath -w "$2")" --output-dir "$(cygpath -w "$SCRIPT_DIR/output")"
+            else
+                python3 "$SCRIPT_DIR/yara_scanner.py" "$2" --output-dir "$SCRIPT_DIR/output"
+            fi
         fi
         ;;
     capa)
         if [ -z "$2" ]; then
             echo "Usage: ghidra.sh capa <binary|encrypted.enc.gz>"
             echo "  CAPA analysis (capabilities + MITRE ATT&CK mapping)"
-            echo "  Supports .enc.gz quarantine files (auto-decrypt in container)"
+            echo "  .enc.gz files: analyzed inside container (no host extraction)"
             exit 1
         fi
-        CAPA_TARGET="$2"
-        CAPA_CLEANUP=""
+        echo "=== CAPA Analysis: $(basename "$2") ==="
         if [[ "$2" == *.enc.gz ]]; then
-            echo "[*] Detected .enc.gz file, decrypting in container for CAPA..."
             ensure_running
-            CAPA_TARGET=$(decrypt_in_container "$2")
+            CONTAINER_PATH=$(decrypt_in_container "$2")
             if [ $? -ne 0 ]; then
                 echo "Error: Decryption failed. Aborting CAPA analysis."
                 exit 1
             fi
-            CAPA_CLEANUP="$CAPA_TARGET"
-            # Extract from container to temp dir for host-side CAPA scan
-            local tmp_dir
-            tmp_dir=$(mktemp -d)
-            local dec_name
-            dec_name=$(basename "$CAPA_TARGET")
-            docker cp "$CONTAINER:$CAPA_TARGET" "$tmp_dir/$dec_name"
-            CAPA_TARGET="$tmp_dir/$dec_name"
-            CAPA_CLEANUP_HOST="$tmp_dir"
-        fi
-        echo "=== CAPA Analysis: $(basename "$CAPA_TARGET") ==="
-        python3 "$SCRIPT_DIR/capa_scanner.py" "$CAPA_TARGET" --output-dir "$SCRIPT_DIR/output"
-        # Cleanup
-        if [ -n "$CAPA_CLEANUP" ]; then
-            cleanup_container "$CAPA_CLEANUP"
-        fi
-        if [ -n "${CAPA_CLEANUP_HOST:-}" ]; then
-            rm -rf "$CAPA_CLEANUP_HOST"
+            capa_scan_in_container "$CONTAINER_PATH"
+            cleanup_container "$CONTAINER_PATH"
+        else
+            # Plain binary: run on host
+            CAPA_TARGET_HOST="$2"
+            if command -v cygpath &>/dev/null; then
+                CAPA_TARGET_HOST="$(cygpath -w "$2")"
+            fi
+            python3 "$SCRIPT_DIR_WIN/capa_scanner.py" "$CAPA_TARGET_HOST" --output-dir "$SCRIPT_DIR_WIN/output"
         fi
         ;;
     ioc-extract)
@@ -344,7 +411,7 @@ case "${1:-}" in
             exit 1
         fi
         echo "=== IOC Extraction: $2 ==="
-        python3 "$SCRIPT_DIR/ioc_extractor.py" "$2" --output-dir "$SCRIPT_DIR/output"
+        python3 "$SCRIPT_DIR_WIN/ioc_extractor.py" "$2" --output-dir "$SCRIPT_DIR_WIN/output"
         ;;
     classify)
         if [ -z "$2" ]; then
@@ -353,22 +420,33 @@ case "${1:-}" in
             exit 1
         fi
         echo "=== Malware Classification: $2 ==="
-        python3 "$SCRIPT_DIR/malware_classifier.py" "$2" --output-dir "$SCRIPT_DIR/output"
+        python3 "$SCRIPT_DIR_WIN/malware_classifier.py" "$2" --output-dir "$SCRIPT_DIR_WIN/output"
         ;;
     analyze-full)
         if [ -z "$2" ]; then
-            echo "Usage: ghidra.sh analyze-full <binary>"
+            echo "Usage: ghidra.sh analyze-full <binary|encrypted.enc.gz>"
             echo "  Runs: yara-scan -> capa -> analyze -> ioc-extract -> classify"
+            echo "  .enc.gz files: all processing inside container (no host extraction)"
             exit 1
         fi
         ensure_running
         BINARY=$(prepare_binary "$2") || exit 1
-        BINARY_NAME=$(basename "$2" | sed 's/\.[^.]*$//')
+        BINARY_NAME=$(basename "$2" | sed 's/\.enc\.gz$//' | sed 's/\.[^.]*$//')
         echo "=== Full Analysis Pipeline: $(basename "$2") ==="
-        echo "[1/5] YARA Scan..."
-        python3 "$SCRIPT_DIR/yara_scanner.py" "$2" --output-dir "$SCRIPT_DIR/output" 2>&1 || echo "  YARA scan completed with warnings"
-        echo "[2/5] CAPA Analysis..."
-        python3 "$SCRIPT_DIR/capa_scanner.py" "$2" --output-dir "$SCRIPT_DIR/output" 2>&1 || echo "  CAPA analysis completed with warnings"
+
+        if [[ "$2" == *.enc.gz ]]; then
+            # For .enc.gz: run YARA/CAPA inside container too
+            echo "[1/5] YARA Scan (in container)..."
+            yara_scan_in_container "$BINARY" 2>&1 || echo "  YARA scan completed with warnings"
+            echo "[2/5] CAPA Analysis (in container)..."
+            capa_scan_in_container "$BINARY" 2>&1 || echo "  CAPA analysis completed with warnings"
+        else
+            echo "[1/5] YARA Scan..."
+            python3 "$SCRIPT_DIR/yara_scanner.py" "$2" --output-dir "$SCRIPT_DIR/output" 2>&1 || echo "  YARA scan completed with warnings"
+            echo "[2/5] CAPA Analysis..."
+            python3 "$SCRIPT_DIR/capa_scanner.py" "$2" --output-dir "$SCRIPT_DIR/output" 2>&1 || echo "  CAPA analysis completed with warnings"
+        fi
+
         echo "[3/5] Ghidra Analysis..."
         run_headless "$BINARY" \
             binary_info.py \
@@ -382,6 +460,7 @@ case "${1:-}" in
         python3 "$SCRIPT_DIR/ioc_extractor.py" "$BINARY_NAME" --output-dir "$SCRIPT_DIR/output" 2>&1 || echo "  IOC extraction completed with warnings"
         echo "[5/5] Malware Classification..."
         python3 "$SCRIPT_DIR/malware_classifier.py" "$BINARY_NAME" --output-dir "$SCRIPT_DIR/output" 2>&1 || echo "  Classification completed with warnings"
+        auto_cleanup
         echo "=== Pipeline Complete. Results in: $SCRIPT_DIR/output/ ==="
         ;;
     exec)
@@ -396,27 +475,30 @@ case "${1:-}" in
         echo ""
         echo "Usage: ghidra.sh <command> [args...]"
         echo ""
+        echo "All commands accept both plain binaries and .enc.gz quarantine files."
+        echo ".enc.gz files are automatically decrypted INSIDE the container (never on host)."
+        echo ""
         echo "Container Management:"
         echo "  start                           Build and start container"
         echo "  stop                            Stop and remove container"
         echo "  status                          Show container status"
         echo ""
         echo "Ghidra Analysis (Docker container):"
-        echo "  analyze <binary>                Full analysis (all scripts)"
-        echo "  analyze-full <binary>           Full pipeline (YARA+CAPA+Ghidra+IOC+classify)"
-        echo "  quarantine-analyze <file.enc.gz> Decrypt + full analysis (proxy-web quarantine)"
-        echo "  decrypt <file.enc.gz>           Decrypt quarantine file in container"
-        echo "  info <binary>                   Architecture, sections, entry point"
-        echo "  decompile <binary>              Decompile all functions to C"
-        echo "  functions <binary>              List functions with addresses/sizes"
-        echo "  strings <binary>                Extract strings with xrefs"
-        echo "  imports <binary>                Import table (suspicious API flagged)"
-        echo "  exports <binary>                Export table"
-        echo "  xrefs <binary>                  Cross-reference report"
+        echo "  analyze <binary|.enc.gz>        Full analysis (all scripts)"
+        echo "  analyze-full <binary|.enc.gz>   Full pipeline (YARA+CAPA+Ghidra+IOC+classify)"
+        echo "  quarantine-analyze <.enc.gz>    Alias for analyze with .enc.gz"
+        echo "  decrypt <.enc.gz>               Decrypt quarantine file in container"
+        echo "  info <binary|.enc.gz>           Architecture, sections, entry point"
+        echo "  decompile <binary|.enc.gz>      Decompile all functions to C"
+        echo "  functions <binary|.enc.gz>      List functions with addresses/sizes"
+        echo "  strings <binary|.enc.gz>        Extract strings with xrefs"
+        echo "  imports <binary|.enc.gz>        Import table (suspicious API flagged)"
+        echo "  exports <binary|.enc.gz>        Export table"
+        echo "  xrefs <binary|.enc.gz>          Cross-reference report"
         echo ""
-        echo "Post-Analysis (host-side, no Docker required):"
-        echo "  yara-scan <binary>              YARA scan (APT attribution, malware family)"
-        echo "  capa <binary>                   CAPA analysis (capabilities + ATT&CK mapping)"
+        echo "Post-Analysis (host-side, no Docker required for plain files):"
+        echo "  yara-scan <binary|.enc.gz>      YARA scan (APT attribution, malware family)"
+        echo "  capa <binary|.enc.gz>           CAPA analysis (capabilities + ATT&CK mapping)"
         echo "  ioc-extract <binary_name>       Extract IOCs from output files"
         echo "  classify <binary_name>          Classify malware type from output files"
         echo ""
