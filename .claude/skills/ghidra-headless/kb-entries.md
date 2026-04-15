@@ -430,3 +430,135 @@ ghidra.sh の yara-scan/capa コマンドに .enc.gz 自動検出・復号を追
 bash tools/ghidra-headless/ghidra.sh yara-scan "tools/proxy-web/Quarantine/<domain>/<ts>/<file>.enc.gz"
 bash tools/ghidra-headless/ghidra.sh capa "tools/proxy-web/Quarantine/<domain>/<ts>/<file>.enc.gz"
 ```
+
+## KB-16: .NETバイナリ解析ガイド（2026-04-12追加）
+
+### Ghidraの.NET制限事項
+
+Ghidraのネイティブデコンパイラ（`decompile_all.py`）は.NET CIL（Common Intermediate Language）を処理できない。
+.NETバイナリに対してdecompileを実行すると全関数で `Decompilation error` が発生する。
+
+**Ghidraで可能な.NET解析:**
+- `info`: アーキテクチャ、セクション情報（CLI Streamエラーが出るが動作はする）
+- `functions`: .NETメタデータからの関数名リスト（クラス名・メソッド名が取得可能）
+- `strings`: PE文字列（VersionInfo等のメタデータ。.NETの文字列リテラルは取得困難）
+- `imports`: 空になる（.NETはP/Invoke以外インポートテーブルを使わない）
+- `xrefs`: 全てcaller/callee 0になる（CILはネイティブ呼び出しではない）
+
+**Ghidraでは不可能:**
+- `decompile`: 全関数エラー（CIL非対応）
+- ネイティブxrefs: CILのメソッド呼び出しはGhidraのxref解析に現れない
+
+### dotnet-decompile ツール（推奨）
+
+ILSpy CLIをDocker化した専用ツール: `tools/dotnet-decompiler/dotnet-decompile.exe`
+
+```bash
+# C#ソースへの完全デコンパイル（.enc.gz自動復号対応）
+bash tools/ghidra-headless/ghidra.sh dotnet-decompile <binary|file.enc.gz>
+
+# メタデータ（参照アセンブリ等）
+bash tools/ghidra-headless/ghidra.sh dotnet-metadata <binary|file.enc.gz>
+
+# 型/クラス一覧
+bash tools/ghidra-headless/ghidra.sh dotnet-types <binary|file.enc.gz>
+```
+
+### .NET判別条件
+1. VTタグに `assembly`, `msil`, `peexe` + `64bits` が同居
+2. Ghidra infoで "CLI Stream" エラー出現
+3. CAPA出力に `dotnet` バックエンド表記
+4. ファイルサイズが小さい（数十KB）のにfunction名が豊富 → .NETメタデータ由来
+
+### .NET推奨フロー
+```
+Phase 0: PE Triage（pe_triage.py）
+  → .NET検出 → Ghidra decompileスキップ、dotnet-decompileへ
+
+Phase 1（並列）:
+  Agent A: dotnet-decompile（C#ソース取得、主力）
+  Agent B: YARA（ファミリ判定）
+  Agent C: CAPA（ATT&CK、dotnetバックエンド）
+  Agent D: Ghidra info+functions（メタデータのみ）
+
+Phase 2: C#ソースから手動IOC抽出
+  → ioc_extractor.pyはGhidra出力前提のためC#ソースには未対応
+  → C#ソースのURL/IP/ドメイン/レジストリキーは手動で抽出
+
+Phase 3: レポート
+```
+
+### 実例: MSILHeracles Loader
+- `net_launcher.exe` (27KB) → VT 36/76 trojan.msilheracles
+- 攻撃フロー: Mutex確認 → C2からDLL取得 → %TEMP%/*.hrz書き出し → LoadLibraryA → Init() → 自己削除
+- TLSハンドラ、スレッド列挙・強制終了、SelfPostRemove（fsutil + del）
+- Ghidraでは全37関数デコンパイル失敗 → dotnet-decompileで完全C#ソース取得成功
+
+## KB-17: Ghidraデコンパイラ権限エラー修正（2026-04-12発見、2026-04-13根本修正）
+
+### 問題
+Ghidraコンテナ内のデコンパイラバイナリ（`/opt/ghidra/Ghidra/Features/Decompiler/os/linux_x86_64/decompile`）の権限不足により、decompile_all.pyが全関数でエラーを返す。**エラーメッセージは空文字列**で原因特定が困難。
+
+### 根本原因（2026-04-13確定）
+初期修正で `chmod +x`（実行権限）のみ付与したが、**読み取り権限(`+r`)が不足**していた。ダイナミックローダー(`ld-linux-x86-64.so.2`)はELFファイルを**読んでメモリにマッピング**する必要があり、`--x`（実行のみ）ではPermission deniedで起動失敗する。
+
+Ghidra Java側はデコンパイラプロセスの起動失敗をJavaのDecompileResultsオブジェクトにラップするが、`getErrorMessage()`は空文字列を返す。`getDecompiledFunction()`がnullになるのみで、根本原因への手がかりを一切提供しない。
+
+### 解決
+Dockerfileを `chmod +rx` に修正:
+```dockerfile
+RUN chmod +rx /opt/ghidra/Ghidra/Features/Decompiler/os/linux_x86_64/decompile || true && \
+    chmod +rx /opt/ghidra/Ghidra/Features/Decompiler/os/linux_arm_64/decompile || true
+```
+
+### 早期検出機能（2026-04-13追加）
+decompile_all.pyに早期失敗検出を追加。最初の10関数が全てエラーの場合:
+- `[CRITICAL]` レベルの警告メッセージを出力
+- `chmod +rx` の修正コマンドを表示
+- 分析は継続するが、ユーザーに即座に問題を通知
+
+### 影響
+- 既存コンテナ: `docker exec -u root ghidra-headless chmod +rx /opt/ghidra/Ghidra/Features/Decompiler/os/linux_x86_64/decompile` で即時修正可能
+- 新規ビルド: Dockerfile修正済み（`+rx`）
+- 修正前: 5068/5068 ERROR（エラーメッセージ空）
+- 修正後: 5068/5068 SUCCESS（エラー0）
+
+---
+
+## KB-18: .NETパイプライン改善（2026-04-12）
+
+### 問題
+.NETバイナリ解析時に3つのツールが正常動作しなかった:
+
+1. **pe_triage.py**: ホスト側ツールのため.enc.gzファイルを直接処理できない（DOS Header magic not found）
+2. **ioc_extractor.py**: Ghidra出力のみスキャン → .NETバイナリではstrings/importsがほぼ空 → IOC 0件
+3. **malware_classifier.py**: 同上の理由で分類不能（Unknown 0%）
+
+### 原因
+- pe_triage.pyはpefileライブラリに依存しホスト実行前提。.enc.gzの復号はコンテナ内でしかできない
+- ioc_extractor.pyとmalware_classifier.pyは `tools/ghidra-headless/output/` のファイルのみ参照
+- dotnet-decompiler出力（`tools/dotnet-decompiler/output/<binary>/` 配下の.csファイル）を参照していなかった
+
+### 解決
+
+**1. ghidra.sh pe-triageサブコマンド追加:**
+- .enc.gz検出 → コンテナ内で復号 → ホストの一時ディレクトリにコピー → pe_triage.py実行 → 一時ファイル削除
+- analyze-fullパイプラインにもPhase 0として統合
+
+**2. ioc_extractor.py dotnet出力スキャン:**
+- `find_ghidra_outputs()` に dotnet-decompiler出力ディレクトリのスキャンを追加
+- `tools/dotnet-decompiler/output/<binary_name>/` 配下の全.csファイルを再帰走査
+- binary_name（拡張子付き）とstem（拡張子なし）の両方でディレクトリを検索
+- .NET名前空間の偽陽性（system.io, system.net等）をBENIGN_DOMAINSに追加
+
+**3. malware_classifier.py dotnet出力スキャン:**
+- 同様にfind_ghidra_outputs()にdotnet-decompiler出力を追加
+- C#ソースをimports_text + strings_textの両方に追加（P/Invoke定義 + 文字列リテラル）
+- Loaderルールに `LoadLibraryA`, `GetProcAddress`, `FreeLibrary`, `DownloadFile`, `WebClient` 等を追加
+
+### 結果（net_launcher.exe再テスト）
+| ツール | Before | After |
+|--------|--------|-------|
+| pe-triage | DOS Header error | LOW_IMPORTS_DYNAMIC_API（正常） |
+| ioc-extract | 0 IOC | 2 IOC（C2 IP + C2 URL） |
+| classify | Unknown 0% | **Loader 98%** |

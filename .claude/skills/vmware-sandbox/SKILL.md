@@ -1,6 +1,6 @@
 ---
 name: vmware-sandbox
-description: VMware Workstation上のWindows VM をvmrun CLIで操作し、マルウェアの動的解析を行う。VMProtect等のパックバイナリやGhidra静的解析では限界のある検体に対応。Use when: 動的解析, マルウェア実行, サンドボックス, sandbox, dynamic analysis, unpack, アンパック, 挙動解析, PE-sieve, HollowsHunter, FakeNet, Frida
+description: VMware Workstation上のWindows VM をvmrun CLIで操作し、マルウェアの動的解析を行う。VMProtect等のパックバイナリやGhidra静的解析では限界のある検体に対応。DispatchLoggerによるスクリプト系マルウェアのCOM監視にも対応。Use when: 動的解析, マルウェア実行, サンドボックス, sandbox, dynamic analysis, unpack, アンパック, 挙動解析, PE-sieve, HollowsHunter, FakeNet, Frida, COM監視, スクリプトマルウェア, VBS解析, JS解析, DispatchLogger
 instructions: |
   スキル実行手順：
   1. VM状態を確認: bash tools/vmware-sandbox/sandbox.sh status
@@ -132,10 +132,6 @@ instructions: |
   bash tools/vmware-sandbox/sandbox.sh frida-analyze <binary> [wait_sec=60]
     Frida spawnerモードでマルウェアを起動し、Sleep無効化・Anti-Debug回避・メモリダンプを自動実行
 
-  dnSpy（.NETデコンパイラ）:
-  bash tools/vmware-sandbox/sandbox.sh install-dnspy    # dnSpyをゲストにインストール
-  bash tools/vmware-sandbox/sandbox.sh dnspy <binary>   # dnSpyでバイナリを開く
-
   アンパック（3-Level Unpacking System）:
   bash tools/vmware-sandbox/sandbox.sh unpack <binary> [level]
     level: 1=memdump-racer, 2=TinyTracer, 3=manual x64dbg, auto=自動エスカレーション（default）
@@ -252,6 +248,22 @@ bash tools/vmware-sandbox/sandbox.sh exec "<GUEST_TOOLS>/fakenet/fakenet3.5/fake
 bash tools/vmware-sandbox/sandbox.sh exec "<GUEST_TOOLS>/procmon/Procmon.exe" /AcceptEula /Backingfile <GUEST_ANALYSIS_DIR>/procmon.pml
 bash tools/vmware-sandbox/sandbox.sh exec "<GUEST_TOOLS>/x64dbg/release/x64/x64dbg.exe"
 ```
+
+### Step 2.5: COM監視（スクリプト系マルウェアの場合）
+VBS/JS/HTA/PowerShell/Officeマクロなどスクリプト系検体の場合、DispatchLoggerでCOM呼び出しを可視化:
+```bash
+# スクリプトファイルを指定（injector経由でDLL注入+cscript実行）
+bash tools/vmware-sandbox/sandbox.sh dispatch-logger malware.vbs 120
+
+# PowerShellスクリプトの場合
+bash tools/vmware-sandbox/sandbox.sh dispatch-logger powershell.exe '-File C:\analysis\malware.ps1'
+
+# EXEでもCOM利用している場合は有効
+bash tools/vmware-sandbox/sandbox.sh dispatch-logger suspicious.exe 60
+```
+出力: `tools/vmware-sandbox/output/displog_<timestamp>.log` (raw) + `_parsed.txt` (再構成済み)
+前提: ゲストにSysinternals DebugView (Dbgview.exe) がインストール済みであること
+カバレッジ: WSH/PowerShell/AutoIT=100%, VBAマクロ=95%, VB6=65%, .NET COM=60%, C++=10%(WMIのみ)
 
 ### Step 3: マルウェア実行
 ```bash
@@ -412,6 +424,7 @@ FakeNet詳細運用（CA証明書、custom_responses.ini設定、HTTPS対応、L
 - 解析後も必ずクリーンスナップショットに復帰すること（汚染防止）
 - NATモードは C2通信キャプチャ時のみ、ユーザー確認を取ってから使用
 - ホストOS上でマルウェアを直接実行しないこと
+- **ホストOS上にマルウェアバイナリを復号・展開しないこと（最重要）**: Dockerコンテナ内の復号済みバイナリを `docker cp` でホストにコピーしてからVMに転送するのは禁止。暗号化ZIP/.enc.gzをそのままVMゲストにコピーし、VM内で展開すること。`tools/vmware-sandbox/input/` にも復号済みマルウェアを置くな
 - 解析結果（テキスト/スクリーンショット）のみホストに回収
 - vmrunコマンドは必ずタイムアウトを設定して実行すること
 - **teeの出力先に実行中スクリプトや重要ファイルを絶対に指定しない**
