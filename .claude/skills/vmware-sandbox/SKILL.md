@@ -132,6 +132,10 @@ instructions: |
   bash tools/vmware-sandbox/sandbox.sh frida-analyze <binary> [wait_sec=60]
     Frida spawnerモードでマルウェアを起動し、Sleep無効化・Anti-Debug回避・メモリダンプを自動実行
 
+  dnSpy（.NETデコンパイラ）:
+  bash tools/vmware-sandbox/sandbox.sh install-dnspy    # dnSpyをゲストにインストール
+  bash tools/vmware-sandbox/sandbox.sh dnspy <binary>   # dnSpyでバイナリを開く
+
   アンパック（3-Level Unpacking System）:
   bash tools/vmware-sandbox/sandbox.sh unpack <binary> [level]
     level: 1=memdump-racer, 2=TinyTracer, 3=manual x64dbg, auto=自動エスカレーション（default）

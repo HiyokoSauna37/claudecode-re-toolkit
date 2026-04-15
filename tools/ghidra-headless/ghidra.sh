@@ -221,6 +221,33 @@ capa_scan_in_container() {
     docker cp "$CONTAINER:/analysis/output/." "$SCRIPT_DIR_WIN/output/" 2>/dev/null || true
 }
 
+# Generate YARA rules from malware sample using yarGen (container-side)
+yargen_in_container() {
+    local container_path="$1"
+    local output_name="${2:-custom_rule}"
+    echo "[*] Running yarGen inside container..." >&2
+
+    docker exec "$CONTAINER" bash -c "
+        if ! command -v yarGen.py &>/dev/null && [ ! -f /tmp/yarGen/yarGen.py ]; then
+            echo '[*] Installing yarGen...'
+            pip3 install --break-system-packages scandir lxml naiveBayesClassifier tlsh lief 2>/dev/null || true
+            cd /tmp && curl -fsSL -o yargen.zip https://github.com/Neo23x0/yarGen/archive/refs/heads/master.zip 2>/dev/null
+            unzip -qo yargen.zip -d /tmp/yarGen-tmp 2>/dev/null
+            mv /tmp/yarGen-tmp/yarGen-master /tmp/yarGen
+            rm -f yargen.zip && rm -rf /tmp/yarGen-tmp
+            cd /tmp/yarGen && python3 yarGen.py --update 2>&1 | tail -5
+        fi
+        echo '[*] Generating YARA rule...'
+        # yarGen requires a directory, not a single file
+        mkdir -p /tmp/yargen_target
+        cp '$container_path' /tmp/yargen_target/ 2>/dev/null || true
+        cd /tmp/yarGen && python3 yarGen.py -m /tmp/yargen_target -o '/analysis/output/${output_name}.yar' --excludegood 2>&1 | tail -20
+        rm -rf /tmp/yargen_target
+    " 2>&1 || echo "  yarGen completed with warnings"
+    docker cp "$CONTAINER:/analysis/output/${output_name}.yar" "$SCRIPT_DIR_WIN/output/" 2>/dev/null || true
+    echo "[*] YARA rule saved to: output/${output_name}.yar"
+}
+
 case "${1:-}" in
     start)
         compose up -d --build
@@ -422,6 +449,34 @@ case "${1:-}" in
         echo "=== Malware Classification: $2 ==="
         python3 "$SCRIPT_DIR_WIN/malware_classifier.py" "$2" --output-dir "$SCRIPT_DIR_WIN/output"
         ;;
+    yargen)
+        if [ -z "$2" ]; then
+            echo "Usage: ghidra.sh yargen <binary|encrypted.enc.gz> [rule_name]"
+            echo "  Generate YARA rule from malware sample using yarGen"
+            echo "  rule_name: Output filename (default: custom_rule)"
+            echo "  .enc.gz files: processed inside container (no host extraction)"
+            exit 1
+        fi
+        RULE_NAME="${3:-custom_rule}"
+        echo "=== yarGen Rule Generation: $(basename "$2") ==="
+        if [[ "$2" == *.enc.gz ]]; then
+            ensure_running
+            CONTAINER_PATH=$(decrypt_in_container "$2")
+            if [ $? -ne 0 ]; then
+                echo "Error: Decryption failed. Aborting yarGen."
+                exit 1
+            fi
+            yargen_in_container "$CONTAINER_PATH" "$RULE_NAME"
+            cleanup_container "$CONTAINER_PATH"
+        else
+            ensure_running
+            # Copy binary to container for yarGen
+            BASENAME=$(basename "$2")
+            docker cp "$2" "$CONTAINER:/tmp/$BASENAME"
+            yargen_in_container "/tmp/$BASENAME" "$RULE_NAME"
+            docker exec "$CONTAINER" rm -f "/tmp/$BASENAME" 2>/dev/null || true
+        fi
+        ;;
     analyze-full)
         if [ -z "$2" ]; then
             echo "Usage: ghidra.sh analyze-full <binary|encrypted.enc.gz>"
@@ -501,6 +556,7 @@ case "${1:-}" in
         echo "  capa <binary|.enc.gz>           CAPA analysis (capabilities + ATT&CK mapping)"
         echo "  ioc-extract <binary_name>       Extract IOCs from output files"
         echo "  classify <binary_name>          Classify malware type from output files"
+        echo "  yargen <binary|.enc.gz> [name]  Generate YARA rule from sample (yarGen)"
         echo ""
         echo "Utilities:"
         echo "  exec <cmd...>                   Execute command in container"

@@ -73,6 +73,13 @@ vm_running() {
     "$VMRUN" list 2>/dev/null | grep -qi "$(basename "$VMX_PATH" .vmx)" && return 0 || return 1
 }
 
+ensure_running() {
+    if ! vm_running; then
+        err "VM is not running. Start it first: sandbox.sh start"
+        exit 1
+    fi
+}
+
 cmd_start() {
     if vm_running; then
         log "VM is already running"
@@ -460,6 +467,54 @@ Write-Output "Guest hardening complete"
     log "Guest-side hardening complete"
 }
 
+cmd_install_dnspy() {
+    log "Installing dnSpy in guest VM..."
+    ensure_running
+
+    local dnspy_dir="${GUEST_TOOLS_DIR}\\dnSpy"
+    local dnspy_exe="${dnspy_dir}\\dnSpy.exe"
+
+    # Check if already installed
+    local check_result
+    check_result=$(vmrun_script 15 "powershell.exe -NoProfile -Command \"Test-Path '${dnspy_exe}'\"" 2>/dev/null || echo "False")
+    if echo "$check_result" | grep -qi "True"; then
+        log "dnSpy is already installed at ${dnspy_exe}"
+        return 0
+    fi
+
+    log "Downloading dnSpy to guest..."
+    # dnSpy latest release (64-bit) - download directly in guest via PowerShell
+    vmrun_script 120 "powershell.exe -NoProfile -Command \"\
+        \$url = 'https://github.com/dnSpyEx/dnSpy/releases/latest/download/dnSpy-net-win64.zip'; \
+        \$zip = '${GUEST_ANALYSIS_DIR}\\dnSpy.zip'; \
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; \
+        Invoke-WebRequest -Uri \$url -OutFile \$zip; \
+        New-Item -ItemType Directory -Force -Path '${dnspy_dir}' | Out-Null; \
+        Expand-Archive -Path \$zip -DestinationPath '${dnspy_dir}' -Force; \
+        Remove-Item \$zip -Force; \
+        Write-Output 'dnSpy installed successfully'\""
+
+    log "dnSpy installed at ${dnspy_exe}"
+    log "NOTE: Take a new snapshot to persist: sandbox.sh snapshot clean_with_tools"
+}
+
+cmd_run_dnspy() {
+    local guest_target="$1"
+    if [ -z "$guest_target" ]; then
+        err "Usage: sandbox.sh dnspy <guest_binary_path>"
+        err "  Opens .NET binary in dnSpy for analysis"
+        err "  Example: sandbox.sh dnspy '${GUEST_ANALYSIS_DIR}\\malware.exe'"
+        exit 1
+    fi
+    ensure_running
+    local dnspy_exe="${GUEST_TOOLS_DIR}\\dnSpy\\dnSpy.exe"
+    log "Opening dnSpy with: $guest_target"
+    vmrun_t -T ws -gu "$GU" -gp "$GP" runProgramInGuest "$VMX_PATH" \
+        -activeWindow -noWait "$dnspy_exe" "$guest_target" 2>/dev/null || {
+        warn "dnSpy launch returned non-zero (may still be running). Check: sandbox.sh install-dnspy"
+    }
+}
+
 cmd_guest_tools() {
     log "Checking guest tools..."
     local ps_cmd
@@ -468,7 +523,8 @@ cmd_guest_tools() {
     ps_cmd+="\"${GUEST_TOOLS_DIR}\\hollows_hunter64.exe\","
     ps_cmd+="\"${GUEST_TOOLS_DIR}\\memdump-racer.exe\","
     ps_cmd+="\"${GUEST_TOOLS_DIR}\\x64dbg\\release\\x64\\x64dbg.exe\","
-    ps_cmd+="\"${GUEST_TOOLS_DIR}\\procmon\\Procmon.exe\""
+    ps_cmd+="\"${GUEST_TOOLS_DIR}\\procmon\\Procmon.exe\","
+    ps_cmd+="\"${GUEST_TOOLS_DIR}\\dnSpy\\dnSpy.exe\""
     ps_cmd+='); foreach ($p in $paths) { $e = Test-Path $p; Write-Output "$e : $p" }'
 
     vmrun_t -T ws -gu "$GU" -gp "$GP" runProgramInGuest "$VMX_PATH" \
@@ -1382,6 +1438,8 @@ case "${1:-}" in
     net-disconnect) cmd_net_disconnect ;;
     net-status)     cmd_net_status ;;
     guest-tools)    cmd_guest_tools ;;
+    install-dnspy)  cmd_install_dnspy ;;
+    dnspy)          cmd_run_dnspy "$2" ;;
     harden-vmx)     cmd_harden_vmx ;;
     harden-guest)   cmd_harden_guest ;;
     memdump)        cmd_memdump "$2" "$3" "$4" ;;
