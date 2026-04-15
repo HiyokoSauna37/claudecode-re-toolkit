@@ -8,9 +8,9 @@ Reverse engineering & malware analysis toolkit for [Claude Code](https://claude.
 
 | Skill | Description | Backend |
 |-------|-------------|---------|
-| **proxy-web** | Safe access to malicious websites with full forensic capture | Docker (Chromium + Playwright) |
-| **ghidra-headless** | Automated static analysis with Ghidra (decompile, imports, strings, YARA, CAPA) | Docker (Ghidra 12.0.3 + Kali/radare2) |
-| **vmware-sandbox** | Dynamic malware analysis with VMware VM (unpacking, Frida DBI, FakeNet) | VMware Workstation |
+| **proxy-web** | Safe access to malicious websites with full forensic capture, C2 profiling, ClickFix detection, OTX/VT/MB/TF threat intel | Docker (Chromium + Playwright) |
+| **ghidra-headless** | Automated static analysis with Ghidra (decompile, imports, strings, YARA, CAPA, .NET decompile), analyzer+reviewer agent team | Docker (Ghidra 12.0.3 + Kali/radare2) |
+| **vmware-sandbox** | Dynamic malware analysis with VMware VM (unpacking, Frida DBI, FakeNet, DispatchLogger COM monitoring) | VMware Workstation |
 | **toolkit-setup** | Interactive setup wizard for .env, Docker builds, YARA/CAPA, and VMware config | — |
 
 ## Architecture
@@ -26,9 +26,11 @@ Reverse engineering & malware analysis toolkit for [Claude Code](https://claude.
 │ • Screenshot  │ • Decompile   │ • Unpacking     │
 │ • HTML save   │ • Imports     │ • Frida DBI     │
 │ • Downloads   │ • Strings     │ • FakeNet C2    │
-│ • VT/MB/TF    │ • YARA/CAPA   │ • PE-sieve      │
+│ • VT/MB/TF/OTX│ • YARA/CAPA   │ • PE-sieve      │
 │ • AES encrypt │ • IOC extract │ • Memory dump   │
 │ • Tor support │ • Classify    │ • x64dbg        │
+│ • C2 profiling│ • .NET decomp │ • DispatchLogger │
+│ • ClickFix    │ • Agent team  │ • COM monitor   │
 └───────────────┴───────────────┴─────────────────┘
 ```
 
@@ -155,7 +157,11 @@ python server.py
 Go-based CLI tool for safe web forensics:
 - Docker-isolated Chromium browser
 - Automatic AES-256 encryption of all downloads
-- VirusTotal, MalwareBazaar, ThreatFox integration
+- VirusTotal, MalwareBazaar, ThreatFox, OTX integration
+- C2 auto-profiling (VT + ThreatFox + OTX + Passive DNS + port scan)
+- ClickFix detection and JS deobfuscation analysis
+- Network log classification (BLOCKCHAIN_RPC, C2_API, TRACKER, etc.)
+- Batch domain probing for large-scale IOC triage
 - Tor proxy support
 - Directory listing parser for C2 servers
 
@@ -163,10 +169,13 @@ Go-based CLI tool for safe web forensics:
 
 Docker-based Ghidra automation:
 - Full binary analysis (info, imports, exports, strings, functions, xrefs, decompile)
+- .NET binary decompilation via ILSpy CLI (dotnet-decompile, dotnet-metadata, dotnet-types)
+- PE Triage (Phase 0) with packer detection and entropy analysis
 - YARA scanning with signature-base and yara-forge rules
 - Mandiant CAPA capability analysis with MITRE ATT&CK mapping
 - IOC extraction (IP, domain, URL, hash, registry keys)
 - Malware classification (InfoStealer, Ransomware, RAT, Dropper, Loader, Worm)
+- Analyzer + Reviewer agent team for quality-assured analysis sessions
 - Kali Linux container with radare2 for quick triage, entropy analysis, crypto detection, and binary diffing
 
 ### vmware-sandbox
@@ -174,6 +183,7 @@ Docker-based Ghidra automation:
 VMware Workstation VM automation:
 - 3-Level Unpacking System (memdump-racer → TinyTracer → x64dbg)
 - Frida DBI with anti-debug bypass and memory dumping
+- DispatchLogger COM monitoring for script-based malware (VBS, JS, HTA, PowerShell, Office macros)
 - FakeNet-NG integration for C2 protocol capture
 - Network isolation management
 - Comprehensive guest tool suite (x64dbg, PE-sieve, HollowsHunter, etc.)

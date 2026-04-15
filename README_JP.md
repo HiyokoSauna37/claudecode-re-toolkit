@@ -8,9 +8,9 @@
 
 | スキル | 概要 | バックエンド |
 |--------|------|-------------|
-| **proxy-web** | 悪性Webサイトへの安全なアクセスとフォレンジックデータ取得 | Docker (Chromium + Playwright) |
-| **ghidra-headless** | Ghidra による自動静的解析（デコンパイル、インポート、文字列、YARA、CAPA） | Docker (Ghidra 12.0.3 + Kali/radare2) |
-| **vmware-sandbox** | VMware VM を使ったマルウェア動的解析（アンパック、Frida DBI、FakeNet） | VMware Workstation |
+| **proxy-web** | 悪性Webサイトへの安全なアクセス、C2プロファイリング、ClickFix検出、OTX/VT/MB/TF脅威インテリジェンス | Docker (Chromium + Playwright) |
+| **ghidra-headless** | Ghidra による自動静的解析（デコンパイル、インポート、文字列、YARA、CAPA、.NETデコンパイル）、analyzer+reviewerエージェントチーム | Docker (Ghidra 12.0.3 + Kali/radare2) |
+| **vmware-sandbox** | VMware VM を使ったマルウェア動的解析（アンパック、Frida DBI、FakeNet、DispatchLogger COM監視） | VMware Workstation |
 | **toolkit-setup** | .env作成、Dockerビルド、YARA/CAPA、VMware設定の対話型セットアップウィザード | — |
 
 ## アーキテクチャ
@@ -26,9 +26,11 @@
 │ • スクリーンショット│ • デコンパイル │ • アンパック    │
 │ • HTML保存    │ • インポート   │ • Frida DBI     │
 │ • ダウンロード │ • 文字列抽出   │ • FakeNet C2    │
-│ • VT/MB/TF    │ • YARA/CAPA   │ • PE-sieve      │
+│ • VT/MB/TF/OTX│ • YARA/CAPA   │ • PE-sieve      │
 │ • AES暗号化   │ • IOC抽出     │ • メモリダンプ   │
 │ • Tor対応     │ • 自動分類     │ • x64dbg        │
+│ • C2プロファイル│ • .NETデコンパイル│ • DispatchLogger│
+│ • ClickFix検出│ • エージェントチーム│ • COM監視      │
 └───────────────┴───────────────┴─────────────────┘
 ```
 
@@ -154,7 +156,11 @@ python server.py
 Go 製 CLI ツールによる安全な Web フォレンジック:
 - Docker 隔離された Chromium ブラウザ
 - 全ダウンロードファイルの自動 AES-256 暗号化
-- VirusTotal、MalwareBazaar、ThreatFox 連携
+- VirusTotal、MalwareBazaar、ThreatFox、OTX 連携
+- C2 自動プロファイリング（VT + ThreatFox + OTX + Passive DNS + ポートスキャン）
+- ClickFix 検出と JS 難読化解析
+- ネットワークログ自動分類（BLOCKCHAIN_RPC、C2_API、TRACKER 等）
+- 大量ドメイン一括プローブによる IOC トリアージ
 - Tor プロキシ対応
 - C2 サーバーのディレクトリリスティング解析
 
@@ -162,10 +168,13 @@ Go 製 CLI ツールによる安全な Web フォレンジック:
 
 Docker ベースの Ghidra 自動解析:
 - フルバイナリ解析（info、imports、exports、strings、functions、xrefs、decompile）
+- .NET バイナリの ILSpy CLI デコンパイル（dotnet-decompile、dotnet-metadata、dotnet-types）
+- PE トリアージ（Phase 0）によるパッカー検出・エントロピー分析
 - signature-base / yara-forge ルールによる YARA スキャン
 - Mandiant CAPA によるケイパビリティ分析 + MITRE ATT&CK マッピング
 - IOC 自動抽出（IP、ドメイン、URL、ハッシュ、レジストリキー）
 - マルウェア種別自動分類（InfoStealer、Ransomware、RAT、Dropper、Loader、Worm）
+- Analyzer + Reviewer エージェントチームによる品質保証付き解析セッション
 - Kali Linux コンテナの radare2 による高速トリアージ、エントロピー分析、暗号定数検出、バイナリ差分比較
 
 ### vmware-sandbox
@@ -173,6 +182,7 @@ Docker ベースの Ghidra 自動解析:
 VMware Workstation VM 自動操作:
 - 3段階アンパックシステム（memdump-racer → TinyTracer → x64dbg）
 - Frida DBI によるアンチデバッグ回避 + メモリダンプ
+- DispatchLogger COM 監視によるスクリプト系マルウェア解析（VBS、JS、HTA、PowerShell、Office マクロ）
 - FakeNet-NG 連携による C2 プロトコルキャプチャ
 - ネットワーク隔離管理
 - 包括的なゲスト内ツール群（x64dbg、PE-sieve、HollowsHunter 等）
