@@ -11,7 +11,7 @@ instructions: |
 
   | ユーザの入力 | 最初に実行するコマンド |
   |---|---|
-  | URL | `preflight` → `probe --tor URL` → 結果に応じてURL分析 |
+  | URL | `preflight` → `probe "URL"` → `[Action]` に従い URL分析（`--tor` 要否も Action 判断）|
   | IP or IP:port | `c2-profile IP:port` (これ1つで基本完了) |
   | ドメイン名 | `probe` でHTTP確認 → URL分析 or `otx domain` でTI検索 |
   | ファイルハッシュ | `check HASH` → `behavior HASH` → `bazaar hash HASH` |
@@ -20,7 +20,7 @@ instructions: |
 
   ## URL分析フロー
   0. `preflight`
-  1. `probe --tor "URL"` → Direct/Tor/Skip判定
+  1. `probe "URL"` → `[Action]` 判定（`Direct` / `Use --tor` / `Skip`）。`--tor` 付きで probe したい場合はホスト側 127.0.0.1:9050 必要
   2. `"URL"` (or `--tor "URL"`) → スクリーンショット+DL+暗号化
   3. DLファイルあり → `check`/`behavior`/`bazaar hash` → Ghidra提案
   4. DLファイルなし → `classify network.csv --target DOMAIN` でネットワーク分析
@@ -79,7 +79,10 @@ instructions: |
     - スクリプト等で抑制したい場合: `proxy-web "URL" --skip-preflight`
     - 症状: `Docker daemon ... not running` → Docker Desktop 起動後に再実行
   - **`c2-profile` / `probe` / `threatfox` / `otx` / `vt-ip` は Docker 不要**（純ネットワーク/API）→ preflight 不要
-  - **`--tor` は tor SOCKS5 (127.0.0.1:9050) 必須**。ローカル tor 未起動なら REFUSED。Docker Tor コンテナを別途起動するか、`--tor` を外す
+  - **`--tor` の要否判断**: `probe "URL"` の `[Action]` 表示（`Direct` / `Use --tor` / `Skip`）に従う。デフォルトは Direct で、必要時のみ `--tor` を付与
+  - **`--tor` の挙動（コマンドで違う）**:
+    - `proxy-web.exe "URL" --tor`（URL分析）→ Docker tor-proxy を自動起動（追加セットアップ不要）
+    - `probe --tor` / `probe --batch --tor`（probe系）→ **ホスト側 127.0.0.1:9050 必要**。未起動なら REFUSED → `--tor` を外して Direct 再試行、それも失敗なら `Skip`
   - **WebFetch は ThreatFox/VTサイトで CAPTCHA に阻まれる** → APIを直接叩くコマンド（`threatfox` / `vt-ip` / `otx`）を使う
 
   ## ThreatFox `tag` / `malware` は --limit N 対応（2026-04-17強化）
@@ -98,9 +101,10 @@ PW="tools/proxy-web/proxy-web.exe"    # 毎回フルパスで実行
 
 # === 基本 ===
 $PW preflight                          # Docker/環境変数チェック
-$PW probe --tor "URL"                  # DNS+HTTP+FortiGate検出
+$PW probe "URL"                        # Direct probe (推奨: [Action] 判断後に --tor 要否決定)
+$PW probe --tor "URL"                  # 強制 Tor probe (要ホスト側 127.0.0.1:9050)
 $PW "URL"                             # URL分析（SS+DL+暗号化）
-$PW --tor "URL"                       # Tor経由URL分析
+$PW --tor "URL"                       # Tor経由URL分析（tor-proxy コンテナ自動起動）
 $PW decrypt <file.enc.gz>             # 復号化
 
 # === 脅威インテリジェンス ===
@@ -138,15 +142,28 @@ python3 tools/proxy-web/js_deobfuscate.py page.html            # proxy-web出力
 
 # === ClearFake専用解析 ===
 python3 tools/proxy-web/clearfake_decode.py "URL"              # XOR+B64復号+スマートコントラクト設定+IOC
-python3 tools/proxy-web/clearfake_decode.py "URL" --modes cloudflare,browser  # モードスクリプト指定
+python3 tools/proxy-web/clearfake_decode.py "URL" --modes cloudflare,browser  # モードスクリプット指定
 python3 tools/proxy-web/clearfake_decode.py "URL" --ioc-only   # IOCリストのみ
 python3 tools/proxy-web/clearfake_decode.py "URL" --json       # JSON出力
 
 # === 分析 ===
-$PW classify <csv> --target <domain>  # ネットワークログ分類
-$PW batch-probe <file> --threads 30   # 大量ドメイン一括プローブ
-$PW probe --batch "URL"               # 並列安全probe
+$PW classify <csv> --target <domain>        # ネットワークログ分類
+$PW batch-probe <file> --threads 30         # 大量ドメイン一括プローブ (stdout出力のみ、ファイル書込なし)
+$PW batch-probe <file> --timeout 5 --dns-only   # DNS解決のみで高速チェック
+$PW probe --batch "URL"                     # 並列安全probe (exit 2で全キャンセル回避)
 ```
+
+## batch-probe の出力仕様
+
+- **ファイル出力なし、stdout のみ**。結果を保存したい場合は `| tee result.txt` でリダイレクト
+- 分類: `Alive`（DNS解決+HTTP応答あり）/ `Filtered`（timeout、FW疑い）/ `Dead`（DNS失敗/refused/521）
+- Alive 行フォーマット: `  domain.example -> 1.2.3.4 HTTP 200 [nginx]`
+- アクティブドメイン抽出 one-liner:
+  ```bash
+  $PW batch-probe domains.txt --threads 30 \
+    | awk '/^Alive domains:/{flag=1;next} /^Filtered/{flag=0} flag && /->/{print $1}' > active.txt
+  ```
+- 後続は `active.txt` を用いて `probe` → `[Action]` 判断 → URL分析 or `classify` へ
 
 ## C2プロファイリング
 
@@ -169,7 +186,7 @@ $PW classify Quarantine/<domain>/<ts>/network.csv --target <domain>
 
 `tools/proxy-web/Quarantine/<domain>/<timestamp>/`
 
-主要ファイル: `screenshot.png` / `page.html` / `*.enc.gz` / `metadata.json` / `network.csv`
+主要ファイル: `screenshot.png` / `page.html` / `*.enc.gz` (AES-256-CBC + gzip) / `metadata.json` / `network.csv`
 
 ClickFix検出時: `clipboard_captured.json` / `decoded_payloads.json` / `inline_N.js` / `script_N.js`
 
