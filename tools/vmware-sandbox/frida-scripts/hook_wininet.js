@@ -48,7 +48,7 @@ Interceptor.attach(Process.getModuleByName('kernel32.dll').getExportByName('Virt
 // === Dump decrypted payload from RWX and RW regions ===
 function dumpRegion(tag, addr, size) {
     try {
-        var fname = 'C:\\Users\\malwa\\Desktop\\analysis\\dump_' + tag + '_0x' + addr.toString(16) + '.bin';
+        var fname = 'C:\\analysis\\dump_' + tag + '_0x' + addr.toString(16) + '.bin';
         var file = new File(fname, 'wb');
         file.write(Memory.readByteArray(addr, size));
         file.close();

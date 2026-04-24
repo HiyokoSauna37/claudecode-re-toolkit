@@ -27,7 +27,7 @@ instructions: |
 
 | | パス |
 |---|---|
-| **ソース（最新）** | `C:\Users\xxxxx\.claude\skills\` |
+| **ソース（最新）** | `~/.claude/skills/`（= `%USERPROFILE%\.claude\skills\`） |
 | **ターゲット（本リポ）** | `.claude/skills/` |
 
 ## 同期対象スキル
@@ -71,11 +71,11 @@ Tools/quarantine/      → tools/quarantine/
 
 | パターン | 置換先 |
 |---|---|
-| `C:\Users\malwa\...` | `<GUEST_TOOLS>` or 汎用パス |
-| `C:\Users\xxxxx\...` | 除去またはプレースホルダ |
-| `malware-hunt@outlook.jp` | 除去 |
-| `"malwa"→"malware"部分一致` | 汎用的な説明に |
-| 具体的なFakeNetパス `C:\Users\malwa\Desktop\tools\fakenet\...` | `<GUEST_TOOLS>/fakenet/...` |
+| VMゲストユーザー名を含む `C:\Users\<guest-user>\...` | `<GUEST_TOOLS>` or 汎用パス |
+| ホストユーザー名を含む `C:\Users\<host-user>\...` | 除去またはプレースホルダ |
+| 個人メールアドレス | 除去 |
+| ゲストユーザー名による `malware` 部分一致の検知事情 | 汎用的な説明に |
+| 具体的な FakeNet ゲストパス（ゲストユーザー名入り） | `<GUEST_TOOLS>/fakenet/...` |
 | 具体的なメールアドレス (`*@outlook.*`, `*@gmail.*` 等) | 除去 |
 
 ### コンテンツ判定
@@ -126,13 +126,15 @@ git push
 
 ## 個人情報チェック（最終確認）
 
-push前に以下のgrepで個人情報が含まれていないことを確認:
+push前に以下のgrepで個人情報が含まれていないことを確認（`<HOST_USER>` と `<GUEST_USER>` はローカル環境の実値に置き換える）:
 
 ```bash
-grep -r "malwa@\|malware-hunt@\|@outlook\.\|@gmail\.\|@yahoo\.\|C:\\\\Users\\\\malwa\|C:\\\\Users\\\\shima" .claude/skills/ --include="*.md" -l
+HOST_USER="$(whoami)"
+GUEST_USER="<your-vm-guest-username>"
+grep -rE "(@(outlook|gmail|yahoo|icloud|hotmail)\.)|C:\\\\Users\\\\(${HOST_USER}|${GUEST_USER})" .claude/skills/ --include="*.md" -l
 ```
 
-ヒットがあれば修正してからpush。`shimakaze-git`（公開GitHubユーザー名）は許容。
+ヒットがあれば修正してからpush。公開GitHubユーザー名（例: `shimakaze-git`）は許容。
 
 ## 注意事項
 

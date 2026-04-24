@@ -58,6 +58,10 @@ tools/ghidra-headless/logs/*
 tools/vmware-sandbox/logs/*
 !tools/vmware-sandbox/logs/.gitkeep
 
+# GUI prototype test/runtime artifacts (may leak host paths)
+tools/gui-prototype/test_out.txt
+tools/gui-prototype/uploads/
+
 # Analysis reports (optional, uncomment to ignore)
 # reports/
 

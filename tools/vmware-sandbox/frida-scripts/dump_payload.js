@@ -9,7 +9,7 @@
 
 'use strict';
 
-var DUMP_DIR = 'C:\\Users\\malwa\\Desktop\\analysis\\dumps';
+var DUMP_DIR = 'C:\\analysis\\dumps';
 var MIN_DUMP_SIZE = 4096;
 var dumpCount = 0;
 var allocTracker = {};

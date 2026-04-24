@@ -543,7 +543,7 @@ cmd_memdump() {
 
     if [ -z "$guest_target" ]; then
         err "Usage: sandbox.sh memdump <guest_target_path> [delays_csv] [guest_outdir]"
-        err "Example: sandbox.sh memdump 'C:\\Users\\malwa\\Desktop\\analysis\\install.exe'"
+        err "Example: sandbox.sh memdump 'C:\\analysis\\install.exe'"
         exit 1
     fi
 

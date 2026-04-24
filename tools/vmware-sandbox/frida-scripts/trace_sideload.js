@@ -65,7 +65,7 @@ Interceptor.attach(virtualAlloc, {
             setTimeout(function() {
                 try {
                     var data = dumpAddr.readByteArray(dumpSize);
-                    var fname = 'C:\\Users\\malwa\\Desktop\\analysis\\dump_rwx_' + idx + '_0x' + dumpAddr.toString(16) + '.bin';
+                    var fname = 'C:\\analysis\\dump_rwx_' + idx + '_0x' + dumpAddr.toString(16) + '.bin';
                     var f = new File(fname, 'wb');
                     f.write(data);
                     f.close();
