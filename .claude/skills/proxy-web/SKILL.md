@@ -28,23 +28,64 @@ instructions: |
 
   ## C2フロー
   1. `c2-profile IP:port` (VT+TF+OTX+PassiveDNS+ポートスキャン自動)
-  2. 追加: `recon URL` / `ws probe ws://IP:port/ws` / `list URL`
-  3. パネル発見 → URL分析でキャプチャ
-  4. OTXパルス発見 → `otx stats PULSE_ID` / `otx hashes PULSE_ID`
-  5. 大量IOC → `batch-probe domains.txt` でアクティブなもの特定
+  2. **クラスタ全体プロファイル**: `python3 tools/proxy-web/intel/c2cluster.py profile --seed IP:port` or `--tag TAG_NAME`
+     - ThreatFoxタグ横展開→並列プローブ→fingerprintグループ化を一撃で実行
+     - 全ノードのOPEN/FILTERED/CLOSED判定、HTMLタイトル/Server抽出、パネル候補抽出
+  3. 追加: `recon URL` / `ws probe ws://IP:port/ws` / `list URL`
+  4. パネル発見 → URL分析でキャプチャ
+  5. OTXパルス発見 → `otx stats PULSE_ID` / `otx hashes PULSE_ID`
+  6. 大量IOC → `batch-probe domains.txt` でアクティブなもの特定
+  7. **fingerprintハンティング**: `python3 tools/proxy-web/intel/c2cluster.py fp-hunt ips.txt --title "Bot Manager" --server "Microsoft-HTTPAPI"` — 既知パターンでの横断捜索
+  8. **threat-intel ツール一式** (`tools/proxy-web/intel/`): `c2cluster` / `c2hunt` / `threatfeed` / `iocminer` / `loghunter` / `intel` (統合ディスパッチャ) / `hunt-report.exe` (Go, 結果集約)
 
   ## ClickFix JSペイロード分析フロー
-  1. `probe --batch` で各ペイロードURLの生存確認（200/400/404）
-  2. `fetch URL` で生JSファイルを取得（**ブラウザ不使用、`<pre>`タグ問題なし**）
-  3. `python3 tools/proxy-web/js_deobfuscate.py <file.js>` でClickFix検出+IOC抽出
-  4. HTMLページ（JSが注入される先）は従来通り `proxy-web.exe "URL"` でスクリーンショット取得
-  注意: `.js`ファイルを `proxy-web.exe "URL"` に渡すとChromiumが `<pre>` テキスト表示する → 必ず `fetch` を使う
+  1. `probe --batch` で各ペイロードURLの生存確認
+  2. **JSファイル取得は `--url` 推奨（ディスク書き込みなし、Defender回避）:**
+     ```
+     python3 tools/proxy-web/js_deobfuscate.py --url "http://domain/api/css.js"
+     ```
+  3. `fetch URL` を使う場合: **自動で `.enc.gz` 暗号化保存される** (Defender対策)
+     - 解析時: `proxy-web.exe decrypt <file.enc.gz>` してから `js_deobfuscate.py`
+     - またはそのまま `js_deobfuscate.py <file.enc.gz>` でも自動復号
+  4. ClearFake (Polygonブロックチェーン型C2) の場合:
+     ```
+     python3 tools/proxy-web/clearfake_decode.py "http://domain/api/css.js"
+     ```
+  5. HTMLページはブラウザで: `proxy-web.exe "URL"` → スクリーンショット取得
+  注意: `.js`ファイルを `proxy-web.exe "URL"` に渡すとChromiumが `<pre>` テキスト表示 → 必ず `--url` か `fetch` を使う
+
+  ## ClearFakeキャンペーン識別パターン
+  - Passive DNS: 大量の `.beer` TLDドメインが同一IPに集中 (CDN名typosquat)
+  - ThreatFox tags: `ClearFake`, `ClickFix`, `ErrTraffic`, `bulletproof`
+  - VT communicating files: `stealer1.txt`, `clickfix.ps1`, `7z.exe` など
+  - ASN: Omegatech LTD (AS202412) = bulletproof hosting
+  - JS内: `__BW_SCRIPT_INITIALIZED__`, `CONTRACT_CONFIG`, `MODE_FILE_MAP`
+  - Polygon RPC呼び出し: `rpc.ankr.com/polygon`, `polygon.drpc.org` 等
+
+  ## Pythonスクリプト実行の注意（Windows Git Bash）
+  - **`python3 -c "...多行コード..."` は禁止** → Windowsバッチwrapperが干渉してインデントエラー
+  - Writeツールで `.py` ファイルを作成してから実行する
+  - ファイル書き込みは `/tmp/` 不可のことが多い → Writeツールでプロジェクト内に作成
 
   ## 安全規則
   - DLファイルは**コンテナ内で暗号化済み**。ホストに生バイナリは出ない
+  - `fetch` コマンドも **`.enc.gz` 暗号化保存** (Defender対策、2026-04-17修正)
   - Ghidra解析: `ghidra.sh quarantine-analyze <file.enc.gz>`
   - probe並列時は `--batch` 必須（exit 2で全キャンセル防止）
   - ClickFix/フィッシング検出はURL分析時に自動実行（clipboard_captured.json等）
+
+  ## 実行前チェック（2026-04-17強化）
+  - **`proxy-web "URL"` 実行前に preflight 自動実行**（Docker 未起動なら即終了 → 3回無駄リトライなし）
+    - スクリプト等で抑制したい場合: `proxy-web "URL" --skip-preflight`
+    - 症状: `Docker daemon ... not running` → Docker Desktop 起動後に再実行
+  - **`c2-profile` / `probe` / `threatfox` / `otx` / `vt-ip` は Docker 不要**（純ネットワーク/API）→ preflight 不要
+  - **`--tor` は tor SOCKS5 (127.0.0.1:9050) 必須**。ローカル tor 未起動なら REFUSED。Docker Tor コンテナを別途起動するか、`--tor` を外す
+  - **WebFetch は ThreatFox/VTサイトで CAPTCHA に阻まれる** → APIを直接叩くコマンド（`threatfox` / `vt-ip` / `otx`）を使う
+
+  ## ThreatFox `tag` / `malware` は --limit N 対応（2026-04-17強化）
+  - デフォルト limit=10。大量取得は `--limit 200` 等を指定（最大 1000）
+  - 例: `proxy-web.exe threatfox tag "AS216071" --limit 200`
+  - 取りこぼし例: 2026-04-17以前、AS216071タグは実際50+件あるのに10件で打ち切られていた
 ---
 # Proxy Web
 
@@ -82,15 +123,24 @@ $PW ws capture "ws://IP:port/ws" -d 60 --json
 $PW list "URL"                        # ディレクトリリスティング
 
 # === 生ファイル取得 ===
-$PW fetch "URL"                       # 生HTTPレスポンス保存（ブラウザ不使用）
-$PW fetch "URL" -o output.js          # ファイル名指定
+$PW fetch "URL"                       # .enc.gz暗号化保存（Defender対策）
+$PW fetch "URL" -o output.js          # ファイル名指定（保存は output.js.enc.gz）
 $PW fetch "URL" -d ./mydir            # 出力先ディレクトリ指定
+$PW decrypt <file.enc.gz>             # 復号してから解析
 
 # === JS難読化解析 ===
-python3 tools/proxy-web/js_deobfuscate.py <file.js>           # ClickFix検出+IOC抽出
-python3 tools/proxy-web/js_deobfuscate.py <file.js> --json    # JSON出力
-python3 tools/proxy-web/js_deobfuscate.py <file.js> --ioc-only  # IOCのみ
-python3 tools/proxy-web/js_deobfuscate.py page.html           # proxy-web出力のpage.htmlも対応
+python3 tools/proxy-web/js_deobfuscate.py --url "URL"          # ★推奨: URL直接解析（ディスク書込なし）
+python3 tools/proxy-web/js_deobfuscate.py <file.js>            # ローカルファイル解析
+python3 tools/proxy-web/js_deobfuscate.py <file.enc.gz>        # 暗号化済みファイル自動復号+解析
+python3 tools/proxy-web/js_deobfuscate.py <file> --json        # JSON出力
+python3 tools/proxy-web/js_deobfuscate.py <file> --ioc-only    # IOCのみ
+python3 tools/proxy-web/js_deobfuscate.py page.html            # proxy-web出力のpage.htmlも対応
+
+# === ClearFake専用解析 ===
+python3 tools/proxy-web/clearfake_decode.py "URL"              # XOR+B64復号+スマートコントラクト設定+IOC
+python3 tools/proxy-web/clearfake_decode.py "URL" --modes cloudflare,browser  # モードスクリプト指定
+python3 tools/proxy-web/clearfake_decode.py "URL" --ioc-only   # IOCリストのみ
+python3 tools/proxy-web/clearfake_decode.py "URL" --json       # JSON出力
 
 # === 分析 ===
 $PW classify <csv> --target <domain>  # ネットワークログ分類

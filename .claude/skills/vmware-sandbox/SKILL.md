@@ -431,6 +431,30 @@ FakeNet詳細運用（CA証明書、custom_responses.ini設定、HTTPS対応、L
 - **.enc.gz ファイルは analyze コマンドに直接渡せる（自動復号）**
 - **vmrun経由のPowerShellはパラメータ3つ以上で壊れる → run-script推奨**
 
+### 2026-04-19 セッションで判明した追加注意事項
+
+- **Frida は必ず事前チェック**: ゲストに Frida が入っているとは限らない（スナップショット更新で消える可能性）。Frida runner 実行前に以下のワンライナーでプリフライトチェック:
+  ```bash
+  bash tools/vmware-sandbox/sandbox.sh guest-cmd 'python -c "import frida; print(frida.__version__)"'
+  ```
+  失敗したら `python -m pip install frida frida-tools` をPS1先頭で実行する（ただし複数 Python がいる環境では明示的 Python パスを使うこと）
+- **PowerShell の `Set-Content -Encoding UTF8` は BOM 付き**: Python スクリプトをゲストに書き出すと `\ufeff` が先頭に入って `SyntaxError` / `ModuleNotFoundError` 類の不可解エラーになる。**BOM 無し UTF-8 で書く**:
+  ```powershell
+  [System.IO.File]::WriteAllText($path, $content, (New-Object System.Text.UTF8Encoding $false))
+  ```
+- **`copy-from` の timeout はデフォルト 30 秒、大きなファイルでは不足**: Procmon PML (100MB超) や HollowsHunter ダンプで頻繁に timeout。`--timeout 120` 明示指定。または VM 内で事前圧縮してから転送
+- **`exec "...exe" -nowait` は vmrun フラグとして機能しない**: `-nowait` が exe の引数として渡されて exit 2。**バックグラウンド起動したい場合は run-script で PowerShell の `Start-Process -WindowStyle Minimized` を使う**
+- **Procmon 等の常駐ツールは `Start-Process`**: `exec Procmon.exe /Quiet /Backingfile ...` で 30秒 timeout する（exe が終わらないので vmrun が待ち続ける）。必ず PowerShell `Start-Process` + 後で `/Terminate` で明示終了
+- **quarantine形式 `.enc.gz` を自分で生成するには `tools/ghidra-headless/scripts/pe-encrypt.py`**: ghidra-headless コンテナ内で暗号化してホスト経由で VM に渡す標準手順（ホスト上にマルウェア展開禁止ルール遵守）
+
+## 標準化ツール（bb-toolkit 連携）
+
+| ツール | 用途 |
+|---|---|
+| `tools/ghidra-headless/scripts/pe-encrypt.py` | コンテナ内ファイル → quarantine `.enc.gz` 形式に暗号化（VM 転送用） |
+| `tools/ghidra-headless/scripts/lnk-parser.py` | LNK の構造分析（動的解析前の初期トリアージで使用） |
+| `tools/bb-toolkit/go/bb-gcs-enum` (Go) | マルウェアが GCS 経由で2次ペイロードを取ってくる場合、同バケットの全ファイル列挙 |
+
 ## VM検知手法
 
 install.exeで確認されたVM検知手法（SMBIOS, CPUID, MAC, プロセス, レジストリ, ドライバ, デバイス等）の詳細は [references/vm-detection-methods.md](references/vm-detection-methods.md) を参照。

@@ -156,12 +156,15 @@ python server.py
 
 Go-based CLI tool for safe web forensics:
 - Docker-isolated Chromium browser
-- Automatic AES-256 encryption of all downloads
+- Automatic AES-256 encryption of all downloads (including `fetch` output, for Defender evasion)
 - VirusTotal, MalwareBazaar, ThreatFox, OTX integration
 - C2 auto-profiling (VT + ThreatFox + OTX + Passive DNS + port scan)
-- ClickFix detection and JS deobfuscation analysis
+- Cluster-wide C2 profiling via `c2cluster.py` (ThreatFox tag expansion, fingerprint-based hunting)
+- ClickFix detection and JS deobfuscation (`js_deobfuscate.py --url` for disk-less analysis)
+- ClearFake Polygon-blockchain C2 decoder (`clearfake_decode.py`)
 - Network log classification (BLOCKCHAIN_RPC, C2_API, TRACKER, etc.)
 - Batch domain probing for large-scale IOC triage
+- Preflight check for Docker daemon and ThreatFox `--limit N` support (up to 1000)
 - Tor proxy support
 - Directory listing parser for C2 servers
 
@@ -177,16 +180,19 @@ Docker-based Ghidra automation:
 - Malware classification (InfoStealer, Ransomware, RAT, Dropper, Loader, Worm)
 - Analyzer + Reviewer agent team for quality-assured analysis sessions
 - Kali Linux container with radare2 for quick triage, entropy analysis, crypto detection, and binary diffing
+- Helper scripts: `lnk-parser.py` (LNK triage), `pe-encrypt.py` (.enc.gz generator for VM transfer), `chunk-extract.py` (.rdata embedded binary extraction)
 
 ### vmware-sandbox
 
 VMware Workstation VM automation:
 - 3-Level Unpacking System (memdump-racer → TinyTracer → x64dbg)
-- Frida DBI with anti-debug bypass and memory dumping
+- Frida DBI with anti-debug bypass and memory dumping (with preflight check for guest Frida install)
 - DispatchLogger COM monitoring for script-based malware (VBS, JS, HTA, PowerShell, Office macros)
 - FakeNet-NG integration for C2 protocol capture
 - Network isolation management
 - Comprehensive guest tool suite (x64dbg, PE-sieve, HollowsHunter, etc.)
+- Automatic `.enc.gz` quarantine decryption inside the VM (host never touches raw malware)
+- BOM-less UTF-8 script deployment and `Start-Process`-based persistent tool launching to avoid vmrun hangs
 
 ## License
 

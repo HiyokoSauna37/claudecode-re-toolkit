@@ -9,7 +9,7 @@ bash tools/vmware-sandbox/sandbox.sh frida-analyze <binary_path> [wait_seconds=6
 ```
 
 自動実行フロー:
-1. クリーンスナップショットに復帰
+1. clean_with_toolsスナップショットに復帰
 2. Frida wheelのオフラインインストール（ゲスト内）
 3. ネットワークをHost-Onlyに切替
 4. マルウェア＋Fridaスクリプトをゲストにコピー
@@ -17,7 +17,7 @@ bash tools/vmware-sandbox/sandbox.sh frida-analyze <binary_path> [wait_seconds=6
 6. `frida -f <binary> -l bypass_vmdetect.js -l dump_payload.js -q -t <sec> --kill-on-exit`
 7. 実行後のスクリーンショット＋プロセスリスト取得
 8. メモリダンプ＋Fridaログをホストに回収
-9. クリーンスナップショットに復帰
+9. clean_with_toolsスナップショットに復帰
 
 ## Fridaスクリプト
 

@@ -186,6 +186,24 @@ KB-1〜KB-21 → [kb-entries.md](kb-entries.md)
 ## 関連スキル
 proxy-web(バイナリ取得) / forensic-analysis(不審EXE深掘り) / memory-forensics(malfindダンプ) / kali-pentest(CTF/r2トリアージ) / vmware-sandbox(パック検体動的解析) / mergen(VMProtect除去) / watchtowr-report(レポート生成)
 
+## 標準化ツール（bb-toolkit 連携）
+
+| ツール | 用途 |
+|---|---|
+| `tools/ghidra-headless/scripts/lnk-parser.py` | LNK構造パース（パディング難読化検出、埋込PE/PDF抽出、MachineID 取得）。**pylnk3 は `ansi` encoding バグで使えないので必ずこちらを使う** |
+| `tools/ghidra-headless/scripts/pe-encrypt.py` | Ghidra コンテナ内ファイル → quarantine .enc.gz 形式 (AES-256-CBC + gzip)。ホスト経由で VM に渡す時の標準手段 |
+| `tools/ghidra-headless/scripts/chunk-extract.py` | PE .rdata から RVA+size 指定で埋込バイナリ抽出 (entropy/magic付き)。Rust/Go マルウェアの DAT_xxx 展開用 |
+| `tools/bb-toolkit/go/bb-gcs-enum` (Go) | GCS 公開バケット全列挙 + ダウンロード (LOLCloud 偵察) |
+
+## 落とし穴（2026-04-19 セッションで判明）
+
+- **BusyBox strings は `-e l` 非対応**: Alpine ベースの ghidra-headless コンテナで UTF-16LE 文字列抽出したい場合、`python3 -c "..."` で直接デコードするか `apk add binutils` で GNU strings を入れる
+- **`unzip` は AES-256 (PKv5.1) 非対応**: MalwareBazaar 配布 ZIP は AES-256 なので必ず `7z x -pinfected` を使う（コンテナに既存）
+- **`docker cp` で MSYS パス変換**: ホスト → コンテナの `/tmp/...` 指定時、`MSYS_NO_PATHCONV=1` プレフィックスを付ける
+- **`yara-scan` / `capa` / `analyze` はホスト側ツール**: コンテナ内 `/tmp/` のバイナリには直接渡せない（ファイル不在エラー）。ホストファイルとして渡すか、`scripts/pe-encrypt.py` で `.enc.gz` 化してから `analyze <file.enc.gz>` を使う
+- **`Sleep(大きな数値)` は単位要注意**: Rust の `Duration::from_nanos(800_000_000)` は 0.8 秒。静的解析で見た数値を秒単位と誤読しない。ProcMon の Process Start→Exit で実時間確認
+- **VMware 単一キー検知の典型**: `HKLM\SOFTWARE\VMware, Inc.\VMware Tools` RegOpenKey → 存在で即 exit する Rust マルウェアが多い。動的解析で 1 秒以内に exit するなら VM 検知を疑う
+
 ## 注意
 - タイムアウト: 5分/ファイル、MAXMEM=4G
 - プロジェクトDBは毎回削除（-deleteProject）

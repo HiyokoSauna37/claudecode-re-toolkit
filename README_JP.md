@@ -155,12 +155,15 @@ python server.py
 
 Go 製 CLI ツールによる安全な Web フォレンジック:
 - Docker 隔離された Chromium ブラウザ
-- 全ダウンロードファイルの自動 AES-256 暗号化
+- 全ダウンロードファイルの自動 AES-256 暗号化（`fetch` 出力も `.enc.gz` 形式、Defender 回避）
 - VirusTotal、MalwareBazaar、ThreatFox、OTX 連携
 - C2 自動プロファイリング（VT + ThreatFox + OTX + Passive DNS + ポートスキャン）
-- ClickFix 検出と JS 難読化解析
+- `c2cluster.py` によるクラスタ全体プロファイリング（ThreatFox タグ横展開、fingerprint ハンティング）
+- ClickFix 検出と JS 難読化解析（`js_deobfuscate.py --url` はディスク書込なし）
+- ClearFake (Polygon ブロックチェーン型 C2) 専用デコーダ（`clearfake_decode.py`）
 - ネットワークログ自動分類（BLOCKCHAIN_RPC、C2_API、TRACKER 等）
 - 大量ドメイン一括プローブによる IOC トリアージ
+- Docker 未起動を事前検出する preflight、ThreatFox `--limit N` （最大 1000 件）対応
 - Tor プロキシ対応
 - C2 サーバーのディレクトリリスティング解析
 
@@ -176,16 +179,19 @@ Docker ベースの Ghidra 自動解析:
 - マルウェア種別自動分類（InfoStealer、Ransomware、RAT、Dropper、Loader、Worm）
 - Analyzer + Reviewer エージェントチームによる品質保証付き解析セッション
 - Kali Linux コンテナの radare2 による高速トリアージ、エントロピー分析、暗号定数検出、バイナリ差分比較
+- ヘルパースクリプト: `lnk-parser.py`（LNK トリアージ）、`pe-encrypt.py`（VM 転送用 `.enc.gz` 生成）、`chunk-extract.py`（`.rdata` 内の埋込バイナリ抽出）
 
 ### vmware-sandbox
 
 VMware Workstation VM 自動操作:
 - 3段階アンパックシステム（memdump-racer → TinyTracer → x64dbg）
-- Frida DBI によるアンチデバッグ回避 + メモリダンプ
+- Frida DBI によるアンチデバッグ回避 + メモリダンプ（ゲスト内 Frida 有無の preflight チェック付き）
 - DispatchLogger COM 監視によるスクリプト系マルウェア解析（VBS、JS、HTA、PowerShell、Office マクロ）
 - FakeNet-NG 連携による C2 プロトコルキャプチャ
 - ネットワーク隔離管理
 - 包括的なゲスト内ツール群（x64dbg、PE-sieve、HollowsHunter 等）
+- VM 内での `.enc.gz` quarantine ファイル自動復号（ホスト上に生マルウェアを一切展開しない）
+- BOM 無し UTF-8 スクリプト転送 + 常駐ツール向け `Start-Process` パターンで vmrun ハングを回避
 
 ## ライセンス
 

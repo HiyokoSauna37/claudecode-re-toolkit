@@ -488,8 +488,9 @@ Phase 2: C#ソースから手動IOC抽出
 Phase 3: レポート
 ```
 
-### 実例: MSILHeracles Loader
+### 実例: MSILHeracles Loader（2026-04-12、furystaff.tech）
 - `net_launcher.exe` (27KB) → VT 36/76 trojan.msilheracles
+- namespace `pornhub`、メソッド `cum()` — 挑発的な命名
 - 攻撃フロー: Mutex確認 → C2からDLL取得 → %TEMP%/*.hrz書き出し → LoadLibraryA → Init() → 自己削除
 - TLSハンドラ、スレッド列挙・強制終了、SelfPostRemove（fsutil + del）
 - Ghidraでは全37関数デコンパイル失敗 → dotnet-decompileで完全C#ソース取得成功
