@@ -307,6 +307,32 @@
     <div onclick="closeSession()" role="menuitem" tabindex="0">Close</div>
   </div>
 
+  <!-- Tweaks panel (readability / theme) -->
+  <button class="tweaks-toggle" id="tweaks-toggle" aria-label="Open readability tweaks" title="Readability tweaks">Tweaks</button>
+  <div id="tweaks-panel" role="dialog" aria-label="Readability tweaks">
+    <div id="tweaks-header">
+      <span>Readability Tweaks</span>
+      <button id="tweaks-close" aria-label="Close tweaks panel">✕</button>
+    </div>
+    <div id="tweaks-body">
+      <div class="tweak-row">
+        <span class="tweak-label">Density</span>
+        <div class="seg" id="tw-density" role="radiogroup" aria-label="Density">
+          <button data-v="readable" class="on" role="radio" aria-checked="true">Readable</button>
+          <button data-v="compact" role="radio" aria-checked="false">Compact</button>
+        </div>
+      </div>
+      <div class="tweak-row">
+        <span class="tweak-label">Theme</span>
+        <div class="seg" id="tw-theme" role="radiogroup" aria-label="Theme">
+          <button data-v="forensic" class="on" role="radio" aria-checked="true">Forensic</button>
+          <button data-v="archive" role="radio" aria-checked="false">Archive</button>
+          <button data-v="specter" role="radio" aria-checked="false">Specter</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Attribution -->
   <footer id="attribution">
     <a href="https://www.flaticon.com/free-icons/malware" title="malware icons" target="_blank" rel="noopener">Icon: Dewi Sari · Flaticon</a>

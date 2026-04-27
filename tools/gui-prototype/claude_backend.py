@@ -3,6 +3,9 @@
 import asyncio
 import json
 import os
+import signal
+import subprocess
+import sys
 from pathlib import Path
 from typing import AsyncIterator
 
@@ -52,6 +55,15 @@ class ClaudeBackend:
 
         yield {"type": "system", "subtype": "start", "data": {"mode": "subprocess"}}
 
+        # Platform-specific flags so we can kill the entire process tree on cancel.
+        # Windows: CREATE_NEW_PROCESS_GROUP allows CTRL_BREAK and lets taskkill /T target descendants.
+        # Unix: start_new_session creates a new process group for os.killpg().
+        popen_kwargs = {}
+        if sys.platform == "win32":
+            popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+        else:
+            popen_kwargs["start_new_session"] = True
+
         try:
             self._process = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -60,6 +72,7 @@ class ClaudeBackend:
                 cwd=self.repo_root,
                 env=env,
                 limit=10 * 1024 * 1024,  # 10 MB line buffer for large tool results
+                **popen_kwargs,
             )
 
             async for msg in self._read_stream_json(self._process.stdout):
@@ -81,12 +94,42 @@ class ClaudeBackend:
             self._process = None
 
     async def cancel(self):
-        """Cancel current execution."""
-        if self._process and self._process.returncode is None:
+        """Cancel current execution by killing the entire process tree.
+
+        On Windows the `claude` shim spawns node.exe which spawns further node/
+        bash/git/sub-agent processes; terminate() only kills the shim, leaving
+        the actual inference + tools running. We kill the whole tree.
+        """
+        proc = self._process
+        if not proc or proc.returncode is not None:
+            return
+
+        pid = proc.pid
+
+        if sys.platform == "win32":
+            # /F = force, /T = kill descendants
             try:
-                self._process.terminate()
-            except ProcessLookupError:
+                await asyncio.to_thread(
+                    subprocess.run,
+                    ["taskkill", "/F", "/T", "/PID", str(pid)],
+                    capture_output=True, timeout=5, check=False,
+                )
+            except Exception:
                 pass
+            # Fallback in case taskkill is unavailable for some reason
+            try:
+                proc.kill()
+            except (ProcessLookupError, OSError):
+                pass
+        else:
+            # POSIX: send SIGKILL to the entire process group
+            try:
+                os.killpg(os.getpgid(pid), signal.SIGKILL)
+            except (ProcessLookupError, PermissionError, OSError):
+                try:
+                    proc.kill()
+                except (ProcessLookupError, OSError):
+                    pass
 
     async def _read_stream_json(self, stream) -> AsyncIterator[dict]:
         """Parse stream-json (NDJSON) output from claude -p."""

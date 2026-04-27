@@ -97,6 +97,7 @@ function cycleTheme() {
   localStorage.setItem("mat_theme", next);
   const btn = document.getElementById("theme-btn");
   if (btn) btn.title = `Theme: ${THEME_LABELS[next]}`;
+  if (typeof syncTweaksTheme === "function") syncTweaksTheme(next);
   showToast(`Theme: ${THEME_LABELS[next]}`, "info");
 }
 
@@ -945,7 +946,7 @@ function addToolCall(msg) {
       <span class="tool-elapsed" data-elapsed-for="${msg.id}"></span>
       <span class="tool-result-badge" data-result-for="${msg.id}"></span>
     </div>
-    <div class="tool-call-body">${esc(JSON.stringify(msg.input, null, 2))}</div>`;
+    <div class="tool-call-body"><div class="tcb-input">${highlightToolOutput(JSON.stringify(msg.input, null, 2))}</div></div>`;
   getChatEl().appendChild(el);
   scrollChat();
 }
@@ -994,8 +995,41 @@ function updateToolResult(msg) {
     tc.classList.remove("running");
     tc.classList.add(msg.is_error ? "completed-error" : "completed-ok");
     const body = tc.querySelector(".tool-call-body");
-    if (body) body.textContent += "\n--- Result ---\n" + msg.content;
+    if (body) {
+      const sep = msg.is_error ? "ERROR" : "RESULT";
+      const cls = msg.is_error ? "tcb-result tcb-error" : "tcb-result";
+      const html = `<div class="tcb-sep">── ${sep} ──</div><div class="${cls}">${highlightToolOutput(String(msg.content || ""))}</div>`;
+      body.insertAdjacentHTML("beforeend", html);
+    }
   }
+}
+
+/* ── Lightweight tool-output highlighter ────────────── */
+function highlightToolOutput(raw) {
+  if (!raw) return "";
+  // Escape HTML first
+  let h = String(raw).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+  // Quoted strings (handles JSON strings; do this BEFORE other patterns so URLs inside strings don't get mangled)
+  h = h.replace(/("(?:[^"\\\n]|\\.)*")/g, '<span class="o-string">$1</span>');
+  // JSON keys (a quoted string immediately followed by `:`)
+  h = h.replace(/(<span class="o-string">"[^"<]+"<\/span>)(\s*):/g,
+    (_, k, sp) => k.replace('o-string', 'o-key') + sp + ':');
+  // Result/Error separators
+  h = h.replace(/^(─+\s*(?:RESULT|ERROR|Result|Error)\s*─+)$/gm, '<span class="o-comment">$1</span>');
+  h = h.replace(/^(---\s*(?:Result|result|Error|error)\s*---)$/gm, '<span class="o-comment">$1</span>');
+  // HTTP status codes after ⇒ or =>
+  h = h.replace(/(⇒|=&gt;|=>)\s*([1-5]\d{2})\b/g, (m, arr, n) => {
+    let cls = 'o-num';
+    if (n[0] === '2') cls = 'o-status-ok';
+    else if (n[0] === '4' || n[0] === '5') cls = 'o-status-err';
+    else if (n[0] === '3') cls = 'o-status-warn';
+    return `${arr} <span class="${cls}">${n}</span>`;
+  });
+  // OK / FAIL / ERROR keywords on their own
+  h = h.replace(/\b(OK|SUCCESS|PASS|DONE)\b/g, '<span class="o-status-ok">$1</span>');
+  h = h.replace(/\b(ERROR|FAIL|FAILED|ERR)\b/g, '<span class="o-status-err">$1</span>');
+  h = h.replace(/\b(WARN|WARNING|TIMEOUT)\b/g, '<span class="o-status-warn">$1</span>');
+  return h;
 }
 
 function addResultFooter(msg) {
@@ -1893,3 +1927,65 @@ function setupCollapsibleAria() {
     });
   });
 }
+
+/* ── Tweaks panel (Density / Theme) ──────────── */
+
+function syncTweaksTheme(theme) {
+  document.querySelectorAll("#tw-theme button").forEach(b => {
+    const on = b.dataset.v === theme;
+    b.classList.toggle("on", on);
+    b.setAttribute("aria-checked", on ? "true" : "false");
+  });
+}
+
+function syncTweaksDensity(density) {
+  document.querySelectorAll("#tw-density button").forEach(b => {
+    const on = b.dataset.v === density;
+    b.classList.toggle("on", on);
+    b.setAttribute("aria-checked", on ? "true" : "false");
+  });
+}
+
+function setupTweaksPanel() {
+  const toggle = document.getElementById("tweaks-toggle");
+  const panel = document.getElementById("tweaks-panel");
+  const closeBtn = document.getElementById("tweaks-close");
+  if (!toggle || !panel) return;
+
+  toggle.addEventListener("click", () => panel.classList.toggle("open"));
+  if (closeBtn) closeBtn.addEventListener("click", () => panel.classList.remove("open"));
+
+  // Density: readable (default) / compact (12px baseline)
+  const savedDensity = localStorage.getItem("mat_density") || "readable";
+  document.body.classList.toggle("compact", savedDensity === "compact");
+  syncTweaksDensity(savedDensity);
+
+  document.querySelectorAll("#tw-density button").forEach(b => {
+    b.addEventListener("click", () => {
+      const v = b.dataset.v;
+      document.body.classList.toggle("compact", v === "compact");
+      localStorage.setItem("mat_density", v);
+      syncTweaksDensity(v);
+    });
+  });
+
+  // Theme: keep in sync with cycleTheme/header button
+  const currentTheme = document.documentElement.getAttribute("data-theme") || "forensic";
+  syncTweaksTheme(currentTheme);
+
+  document.querySelectorAll("#tw-theme button").forEach(b => {
+    b.addEventListener("click", () => {
+      const v = b.dataset.v;
+      document.documentElement.setAttribute("data-theme", v);
+      document.body.setAttribute("data-theme", v);
+      localStorage.setItem("mat_theme", v);
+      syncTweaksTheme(v);
+      const headerBtn = document.getElementById("theme-btn");
+      if (headerBtn && typeof THEME_LABELS !== "undefined") {
+        headerBtn.title = `Theme: ${THEME_LABELS[v] || v}`;
+      }
+    });
+  });
+}
+
+document.addEventListener("DOMContentLoaded", setupTweaksPanel);
