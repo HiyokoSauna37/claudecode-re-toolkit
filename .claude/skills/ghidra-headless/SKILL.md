@@ -11,7 +11,7 @@ instructions: |
   3. .NET判別（VTタグ assembly/msil、`info` 出力の CLI Stream、CAPA バックエンド dotnet のいずれか）→ Ghidra の decompile はスキップし dotnet-decompile を使う
   4. 実行モード選択:
      - 単発調査（imports/strings/xrefs 等の特定コマンドだけ欲しい）→ ショートカット（body「解析起点の選択」A-C参照）
-     - フル解析（ファミリ判定・レポートまで）→ analyze-full パイプライン（Phase 0-4: triage → YARA/CAPA/Ghidra 並列 → IOC/分類 → watchtowr-report → reviewer）
+     - フル解析（ファミリ判定・レポートまで）→ analyze-full パイプライン（Phase 0-7: triage → FLOSS → viz → YARA → CAPA → Ghidra → IOC → 分類。**シーケンシャル実行**）
      - analyzer+reviewer の詳細プロンプトは [references/reviewer-prompts.md](references/reviewer-prompts.md)
   5. **コマンドログは自動記録** — `ghidra.sh` を実行するたびに `tools/ghidra-headless/logs/YYYYMMDD_<target>.md` に自動追記される。手動記述不要。確認は `ghidra.sh log-show <binary>`
   6. 「終了」「exit」宣言時: git add logs/ && commit && push

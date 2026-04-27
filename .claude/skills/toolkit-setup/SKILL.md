@@ -1,8 +1,8 @@
 ---
 name: toolkit-setup
 description: |
-  マルウェア解析ツールキットの初回セットアップおよび再セットアップを実行する。前提条件チェック、.env作成、Dockerイメージビルド、YARA/CAPAインストール、VMware環境構築ガイドを含む。
-  Use when: "セットアップ", "setup", "初期設定", "環境構築", "toolkit-setup", ".envを作りたい", "Dockerビルド", "再セットアップ", "VMware設定", ".env編集"
+  マルウェア解析ツールキットの初回セットアップおよび再セットアップを実行する。前提条件チェック、.env作成、Dockerイメージビルド、YARA/CAPA/FLOSS/dumpulatorインストール、VMware環境構築ガイドを含む。
+  Use when: "セットアップ", "setup", "初期設定", "環境構築", "toolkit-setup", ".envを作りたい", "Dockerビルド", "再セットアップ", "VMware設定", ".env編集", "FLOSS", "dumpulator"
   Do NOT use for: マルウェア解析の実行（malware-fetch / ghidra-headless / malware-sandbox を使用）、個別ツールのトラブルシューティング
 instructions: |
   1. Phase 0 — 環境診断: 以下を並列実行して現状を把握
@@ -72,6 +72,7 @@ Phase 0 の結果に基づき、未セットアップ項目をデフォルトで
 - Docker: malware-fetch イメージビルド
 - Docker: ghidra-headless コンテナ起動
 - YARA/CAPA セットアップ
+- FLOSS/dumpulator セットアップ（pip install flare-floss dumpulator）
 - VMware Sandbox 環境構築ガイド
 
 ### Step 3: 手順実行（Phase 2）
