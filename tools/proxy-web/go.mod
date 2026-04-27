@@ -1,4 +1,4 @@
-module github.com/HiyokoSauna37/claudecode-re-toolkit/tools/proxy-web
+module github.com/HiyokoSauna37/life/tools/proxy-web
 
 go 1.24.0
 

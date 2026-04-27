@@ -13,7 +13,7 @@ instructions: |
      - 単発調査（imports/strings/xrefs 等の特定コマンドだけ欲しい）→ ショートカット（body「解析起点の選択」A-C参照）
      - フル解析（ファミリ判定・レポートまで）→ analyze-full パイプライン（Phase 0-4: triage → YARA/CAPA/Ghidra 並列 → IOC/分類 → watchtowr-report → reviewer）
      - analyzer+reviewer の詳細プロンプトは [references/reviewer-prompts.md](references/reviewer-prompts.md)
-  5. ログは tools/ghidra-headless/logs/YYYYMMDD_<target>.md に必ず書く
+  5. **コマンドログは自動記録** — `ghidra.sh` を実行するたびに `tools/ghidra-headless/logs/YYYYMMDD_<target>.md` に自動追記される。手動記述不要。確認は `ghidra.sh log-show <binary>`
   6. 「終了」「exit」宣言時: git add logs/ && commit && push
   ツールパス: tools/ghidra-headless/ghidra.sh
 ---
@@ -105,8 +105,7 @@ Phase 4: reviewerで見落とし検出
 
 **pe-triage を単独で先打ちすべきケース（analyze-full の前に Verdict 先読み）:**
 - 大サイズ (50MB+) or 低インポート数 (10 DLL 未満) でパッカー疑惑濃厚 → 数分の analyze-full を走らせる前に打ち切り判断
-- 未知の PE / quarantine / 不明な出所（VT・サンドボックスで事前情報なし）→ 静的解析 ROI を先に見極めたい
-- 迷ったら `analyze-full` 直行で OK（Phase 0 Verdict が PACKER_DETECTED のときはパイプライン内で vmware-sandbox 提案が出る）
+- **迷ったら（未知検体・事前情報なしの場合を含む）`analyze-full` 直行で OK**（Phase 0 Verdict が PACKER_DETECTED のときはパイプライン内で vmware-sandbox 提案が出る）
 
 YARA/CAPA は Docker 不要・Ghidra と独立。先に完了したら即ユーザーへ **中間報告** すること:
 - YARA 完了 → ファミリ名・ルール一致数を報告
@@ -121,7 +120,7 @@ Ghidra でデコンパイルする前に .NET バイナリかチェック。3つ
 |---|---|
 | VT タグ | `assembly` / `msil` / `dotnet` |
 | `info` 出力 | セクションに `CLR` / `CLI Stream` |
-| CAPA | バックエンド `dotnet` |
+| CAPA | バックエンド `dotnet`（`ghidra.sh capa` が .NET バイナリを自動判定 — 追加フラグ不要） |
 
 **判別タイミング:** `pe-triage` は PE パッカー検出のみで .NET 判定はしない（CLI Stream シグナルは出ない）。事前情報なしの検体は `ghidra.sh info <binary>` を 1 回打って CLI Stream の有無を確認 → .NET なら dotnet-decompile、通常 PE なら analyze-full に分岐。VT タグで事前に `.NET` と分かっていれば pe-triage すらスキップして直接 dotnet-decompile でよい。
 
@@ -166,6 +165,7 @@ tools/quarantine/quarantine.exe info 1            # 詳細（番号 or ドメイ
 tools/quarantine/quarantine.exe check             # Ghidraコンテナ準備状況
 tools/quarantine/quarantine.exe analyze 1         # 復号+Ghidra解析
 ```
+`analyze N` が `No encrypted files to analyze.` を返した場合: そのエントリに `.enc.gz` バイナリが存在しない（平文ファイルのみ）。`quarantine.exe info N` でパスを確認し別エントリを選択する。平文 JS/HTML は ghidra-headless のスコープ外 → proxy-web の `js_deobfuscate.py` 等を使う。
 
 ## 出力先
 
@@ -191,7 +191,7 @@ docker compose -f tools/dotnet-decompiler/docker-compose.yml up -d --build  # .N
 
 ## Knowledge Base
 
-KB-1〜KB-21 → [kb-entries.md](kb-entries.md)
+KB-1〜KB-21 → [references/kb-entries.md](references/kb-entries.md)
 
 | KB | 内容 |
 |---|---|

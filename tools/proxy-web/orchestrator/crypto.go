@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/rand"
 	"crypto/sha256"
 	"fmt"
 	"io"
@@ -84,6 +85,47 @@ func DecryptQuarantine(encPath, outputPath, password string) error {
 
 	fmt.Printf("[OK] Decrypted: %s -> %s\n", encPath, outputPath)
 	return nil
+}
+
+// EncryptBody encrypts data with AES-256-CBC+gzip, same format as browser quarantine downloads.
+// Output: gzip( IV[16] + AES-256-CBC(PKCS7(data)) )
+// Saved as <outputPath>.enc.gz. Returns the encrypted file path.
+func EncryptBody(data []byte, outputPath string, password string) (string, error) {
+	key := sha256.Sum256([]byte(password))
+
+	iv := make([]byte, aes.BlockSize)
+	if _, err := io.ReadFull(rand.Reader, iv); err != nil {
+		return "", fmt.Errorf("generate IV: %w", err)
+	}
+
+	padLen := aes.BlockSize - (len(data) % aes.BlockSize)
+	padded := make([]byte, len(data)+padLen)
+	copy(padded, data)
+	for i := len(data); i < len(padded); i++ {
+		padded[i] = byte(padLen)
+	}
+
+	block, err := aes.NewCipher(key[:])
+	if err != nil {
+		return "", fmt.Errorf("create cipher: %w", err)
+	}
+	ciphertext := make([]byte, len(padded))
+	cipher.NewCBCEncrypter(block, iv).CryptBlocks(ciphertext, padded)
+
+	combined := append(iv, ciphertext...) //nolint:gocritic
+
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	if _, err := gz.Write(combined); err != nil {
+		return "", fmt.Errorf("gzip write: %w", err)
+	}
+	gz.Close()
+
+	encPath := outputPath + ".enc.gz"
+	if err := os.WriteFile(encPath, buf.Bytes(), 0o644); err != nil {
+		return "", fmt.Errorf("write encrypted: %w", err)
+	}
+	return encPath, nil
 }
 
 // pkcs7Unpad removes PKCS#7 padding.

@@ -25,6 +25,9 @@ const (
 	cpuQuota       = 50000                   // 50% CPU
 	containerWait  = 5 * time.Minute
 	torStartupWait = 60 * time.Second
+
+	// CommonUserAgent is shared across all HTTP clients in this package.
+	CommonUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 )
 
 // ContainerResult is the JSON output from browser_script.py.
@@ -127,7 +130,12 @@ func RunInDocker(url string, outputDir string, quarantinePassword string, useTor
 	case status := <-statusCh:
 		if status.StatusCode != 0 {
 			logs, _ := getContainerLogs(ctx, cli, resp.ID)
-			return nil, fmt.Errorf("container exited with code %d: %s", status.StatusCode, logs)
+			// Truncate long logs for error message, full log goes to stderr
+			if len(logs) > 500 {
+				log.Printf("Container stderr (full):\n%s", logs)
+				logs = logs[:500] + "... (truncated, see log)"
+			}
+			return nil, fmt.Errorf("container exited with code %d:\n%s", status.StatusCode, logs)
 		}
 	case <-time.After(containerWait):
 		stopCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -298,9 +306,3 @@ func stripDockerLogHeaders(data []byte) string {
 	return result.String()
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}

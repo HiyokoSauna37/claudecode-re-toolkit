@@ -159,6 +159,7 @@ Go 製 CLI ツールによる安全な Web フォレンジック:
 - VirusTotal、MalwareBazaar、ThreatFox、OTX 連携
 - C2 自動プロファイリング（VT + ThreatFox + OTX + Passive DNS + ポートスキャン）
 - `c2cluster.py` によるクラスタ全体プロファイリング（ThreatFox タグ横展開、fingerprint ハンティング）
+- 脅威インテリジェンスツール群（`tools/proxy-web/intel/`） — `c2hunt`、`threatfeed`、`iocminer`、`loghunter`、`intel`（統合ディスパッチャ）、`hunt-report.exe`（Go 製集約ツール）
 - ClickFix 検出と JS 難読化解析（`js_deobfuscate.py --url` はディスク書込なし）
 - ClearFake (Polygon ブロックチェーン型 C2) 専用デコーダ（`clearfake_decode.py`）
 - ネットワークログ自動分類（BLOCKCHAIN_RPC、C2_API、TRACKER 等）
@@ -180,10 +181,12 @@ Docker ベースの Ghidra 自動解析:
 - Analyzer + Reviewer エージェントチームによる品質保証付き解析セッション
 - Kali Linux コンテナの radare2 による高速トリアージ、エントロピー分析、暗号定数検出、バイナリ差分比較
 - ヘルパースクリプト: `lnk-parser.py`（LNK トリアージ）、`pe-encrypt.py`（VM 転送用 `.enc.gz` 生成）、`chunk-extract.py`（`.rdata` 内の埋込バイナリ抽出）
+- コマンドログ自動記録 — `ghidra.sh` 実行のたびに `tools/ghidra-headless/logs/YYYYMMDD_<target>.md` に自動追記。確認は `ghidra.sh log-show <binary>`
 
 ### vmware-sandbox
 
 VMware Workstation VM 自動操作:
+- ワンコマンド `analyze` ワークフロー — スナップショット復帰、Host-Only ネットワーク隔離、マルウェア転送、pre/post 状態取得、HollowsHunter 実行、最終復帰までを自動実行（手動 `start` / `net-isolate` 不要）
 - 3段階アンパックシステム（memdump-racer → TinyTracer → x64dbg）
 - Frida DBI によるアンチデバッグ回避 + メモリダンプ（ゲスト内 Frida 有無の preflight チェック付き）
 - DispatchLogger COM 監視によるスクリプト系マルウェア解析（VBS、JS、HTA、PowerShell、Office マクロ）

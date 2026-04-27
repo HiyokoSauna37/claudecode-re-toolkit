@@ -34,14 +34,6 @@ def check_capa():
 def run_capa(binary_path):
     """Run capa with JSON output and return parsed result."""
     cmd = ["capa", "-j", str(binary_path)]
-
-    # If running inside container with rules at /opt/capa-rules, use them explicitly
-    rules_dir = Path("/opt/capa-rules")
-    sigs_dir = Path("/opt/capa-sigs")
-    if rules_dir.is_dir():
-        cmd.extend(["-r", str(rules_dir)])
-    if sigs_dir.is_dir():
-        cmd.extend(["-s", str(sigs_dir)])
     print(f"Running: {' '.join(cmd)}")
 
     try:

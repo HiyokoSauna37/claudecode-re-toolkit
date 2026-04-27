@@ -1,0 +1,137 @@
+package orchestrator
+
+import (
+	"crypto/tls"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+)
+
+// FetchResult holds the result of a raw HTTP fetch
+type FetchResult struct {
+	URL         string
+	StatusCode  int
+	ContentType string
+	Size        int64
+	OutputPath  string // path to saved file (.enc.gz if encrypted, plain otherwise)
+	Encrypted   bool
+	Headers     http.Header
+}
+
+// FetchRaw performs a raw HTTP GET without browser rendering and saves the response body.
+// If password is non-empty, the body is AES-256-CBC encrypted (same format as browser quarantine)
+// to prevent Windows Defender from deleting malicious files on save.
+func FetchRaw(targetURL string, outputDir string, outputFile string, userAgent string, password string) (*FetchResult, error) {
+	if userAgent == "" {
+		userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+	}
+
+	parsed, err := url.Parse(targetURL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid URL: %w", err)
+	}
+
+	// Determine output directory
+	if outputDir == "" {
+		domain := parsed.Hostname()
+		ts := time.Now().Format("20060102_150405")
+		outputDir = filepath.Join("tools", "proxy-web", "Quarantine", domain, ts+"_fetch")
+	}
+	if err := os.MkdirAll(outputDir, 0o755); err != nil {
+		return nil, fmt.Errorf("mkdir: %w", err)
+	}
+
+	// Determine output filename
+	if outputFile == "" {
+		// Derive from URL path
+		pathParts := strings.Split(strings.TrimRight(parsed.Path, "/"), "/")
+		if len(pathParts) > 0 {
+			outputFile = pathParts[len(pathParts)-1]
+		}
+		if outputFile == "" || outputFile == "/" {
+			outputFile = "index.html"
+		}
+		// Strip query string from filename
+		if idx := strings.Index(outputFile, "?"); idx >= 0 {
+			outputFile = outputFile[:idx]
+		}
+	}
+
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+		// Don't follow redirects automatically — save the final response
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 10 {
+				return fmt.Errorf("too many redirects")
+			}
+			return nil
+		},
+	}
+
+	req, err := http.NewRequest("GET", targetURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("request: %w", err)
+	}
+	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("Accept", "*/*")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetch: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Read response body into memory
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read body: %w", err)
+	}
+
+	// Save response headers first (always plain, always safe)
+	headersPath := filepath.Join(outputDir, outputFile+".headers")
+	if hf, herr := os.Create(headersPath); herr == nil {
+		fmt.Fprintf(hf, "HTTP/%d.%d %s\n", resp.ProtoMajor, resp.ProtoMinor, resp.Status)
+		for k, vals := range resp.Header {
+			for _, v := range vals {
+				fmt.Fprintf(hf, "%s: %s\n", k, v)
+			}
+		}
+		hf.Close()
+	}
+
+	outPath := filepath.Join(outputDir, outputFile)
+	encrypted := false
+
+	if password != "" {
+		// Encrypt body → prevent Defender from deleting malicious content on write
+		encPath, encErr := EncryptBody(body, outPath, password)
+		if encErr != nil {
+			return nil, fmt.Errorf("encrypt body: %w", encErr)
+		}
+		outPath = encPath
+		encrypted = true
+	} else {
+		// Plain save (only for non-malicious content; caller's responsibility)
+		if err := os.WriteFile(outPath, body, 0o644); err != nil {
+			return nil, fmt.Errorf("write: %w", err)
+		}
+	}
+
+	return &FetchResult{
+		URL:         targetURL,
+		StatusCode:  resp.StatusCode,
+		ContentType: resp.Header.Get("Content-Type"),
+		Size:        int64(len(body)),
+		OutputPath:  outPath,
+		Encrypted:   encrypted,
+		Headers:     resp.Header,
+	}, nil
+}

@@ -3,32 +3,32 @@
 # @category Analysis
 # @runtime Jython
 
-import os
-import codecs
 from ghidra.app.decompiler import DecompInterface, DecompileOptions
 from ghidra.util.task import ConsoleTaskMonitor
+from ghidra_common import GhidraReport
 
-print("[INFO] decompile_all.py: Script started")
+report = GhidraReport("decompile_all.py", "decompiled.c", "Decompiled Output", currentProgram)
+program = report.program
+name = report.name
 
-program = currentProgram
-name = program.getName()
-output_dir = "/analysis/output"
-
-print("[INFO] decompile_all.py: Processing program='%s', output_dir='%s'" % (name, output_dir))
-
-print("[DEBUG] decompile_all.py: Initializing DecompInterface")
+report.log("DEBUG", "Initializing DecompInterface")
 monitor = ConsoleTaskMonitor()
 decomp = DecompInterface()
 opts = DecompileOptions()
 decomp.setOptions(opts)
-decomp.openProgram(program)
-print("[DEBUG] decompile_all.py: DecompInterface initialized successfully")
+
+open_ok = decomp.openProgram(program)
+if not open_ok:
+    report.log("ERROR", "DecompInterface.openProgram() failed")
+    report.log("ERROR", "This usually means the decompiler binary is missing or has wrong permissions")
+    report.log("ERROR", "Fix: docker exec -u root ghidra-headless chmod +rx /opt/ghidra/Ghidra/Features/Decompiler/os/linux_x86_64/decompile")
+report.log("DEBUG", "DecompInterface initialized (openProgram=%s)" % open_ok)
 
 fm = program.getFunctionManager()
 total_functions = fm.getFunctionCount()
 functions = fm.getFunctions(True)
 
-print("[INFO] decompile_all.py: Total functions to decompile: %d" % total_functions)
+report.log("INFO", "Total functions to decompile: %d" % total_functions)
 
 lines = []
 lines.append("=" * 60)
@@ -41,12 +41,12 @@ errors = 0
 
 for func in functions:
     if monitor.isCancelled():
-        print("[INFO] decompile_all.py: Monitor cancelled, stopping decompilation")
+        report.log("INFO", "Monitor cancelled, stopping decompilation")
         break
 
     func_name = func.getName()
     func_addr = func.getEntryPoint()
-    print("[DEBUG] decompile_all.py: Decompiling function '%s' @ 0x%s" % (func_name, func_addr))
+    report.log("DEBUG", "Decompiling function '%s' @ 0x%s" % (func_name, func_addr))
 
     results = decomp.decompileFunction(func, 60, monitor)
 
@@ -61,35 +61,35 @@ for func in functions:
         if c_code:
             lines.append(c_code)
             count += 1
-            print("[DEBUG] decompile_all.py: Successfully decompiled '%s'" % func_name)
+            report.log("DEBUG", "Successfully decompiled '%s'" % func_name)
         else:
             lines.append("// [ERROR] No C output available")
             errors += 1
-            print("[ERROR] decompile_all.py: No C output for function '%s' @ 0x%s" % (func_name, func_addr))
+            report.log("ERROR", "No C output for function '%s' @ 0x%s" % (func_name, func_addr))
     else:
         error_msg = results.getErrorMessage() if results else "Decompilation failed"
         lines.append("// [ERROR] %s" % error_msg)
         errors += 1
-        print("[ERROR] decompile_all.py: Decompilation error for '%s' @ 0x%s: %s" % (func_name, func_addr, error_msg))
+        report.log("ERROR", "Decompilation error for '%s' @ 0x%s: %s" % (func_name, func_addr, error_msg))
 
-print("[INFO] decompile_all.py: Decompilation complete - success=%d, errors=%d, total=%d" % (count, errors, count + errors))
+    # Early failure detection: if first 10 functions ALL fail, likely a systemic issue
+    if (count + errors) == 10 and count == 0:
+        report.log("CRITICAL", "First 10 functions ALL failed to decompile!")
+        report.log("CRITICAL", "Likely cause: decompiler binary permission issue")
+        report.log("CRITICAL", "Fix: docker exec -u root ghidra-headless chmod +rx /opt/ghidra/Ghidra/Features/Decompiler/os/linux_x86_64/decompile")
+        report.log("CRITICAL", "Then re-run the analysis")
+
+report.log("INFO", "Decompilation complete - success=%d, errors=%d, total=%d" % (count, errors, count + errors))
 
 lines.append("")
 lines.append("// " + "=" * 56)
 lines.append("// Decompiled: %d functions, Errors: %d" % (count, errors))
 
-print("[DEBUG] decompile_all.py: Disposing DecompInterface")
+report.log("DEBUG", "Disposing DecompInterface")
 decomp.dispose()
 
 output = "\n".join(lines)
 print("[*] Decompiled %d functions (%d errors)" % (count, errors))
 
-outfile = os.path.join(output_dir, "%s_decompiled.c" % name)
-print("[DEBUG] decompile_all.py: Writing output to '%s'" % outfile)
-try:
-    with codecs.open(outfile, "w", encoding="utf-8") as f:
-        f.write(output + "\n")
-    print("[*] Saved to %s" % outfile)
-    print("[INFO] decompile_all.py: Script completed successfully")
-except Exception as e:
-    print("[ERROR] decompile_all.py: Failed to write output file '%s': %s" % (outfile, str(e)))
+report.save_custom("decompiled.c", output + "\n")
+report.log("INFO", "Script completed successfully")

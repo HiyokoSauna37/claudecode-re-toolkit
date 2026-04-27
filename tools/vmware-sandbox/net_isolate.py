@@ -223,10 +223,11 @@ def apply_network_change(vmx_path, no_restart=False):
         elapsed = time.monotonic() - start_time
         logger.debug("Start completed in %.3fs", elapsed)
 
-        # VMware Tools needs time to start after resume
-        logger.info("Waiting 15 seconds for VMware Tools to initialize")
-        print("  Waiting for VMware Tools to initialize...")
-        time.sleep(15)
+        # VMware Tools needs time to start after resume (override with VMWARE_TOOLS_WAIT env)
+        _wait = int(os.getenv("VMWARE_TOOLS_WAIT", "15"))
+        logger.info("Waiting %d seconds for VMware Tools to initialize", _wait)
+        print(f"  Waiting {_wait}s for VMware Tools to initialize...")
+        time.sleep(_wait)
         logger.info("Network change applied successfully")
         print("  Network change applied.")
     else:

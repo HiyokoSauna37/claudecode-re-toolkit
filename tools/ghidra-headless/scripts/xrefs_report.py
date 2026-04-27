@@ -3,28 +3,17 @@
 # @category Analysis
 # @runtime Jython
 
-import os
-import codecs
+from ghidra_common import GhidraReport
 
-print("[INFO] xrefs_report.py: Script started")
-
-program = currentProgram
-name = program.getName()
-output_dir = "/analysis/output"
-
-print("[INFO] xrefs_report.py: Processing program='%s', output_dir='%s'" % (name, output_dir))
+report = GhidraReport("xrefs_report.py", "xrefs", "Cross-Reference Report", currentProgram)
+program = report.program
 
 fm = program.getFunctionManager()
 ref_mgr = program.getReferenceManager()
 total_functions = fm.getFunctionCount()
 functions = fm.getFunctions(True)
 
-print("[INFO] xrefs_report.py: Total functions to analyze: %d" % total_functions)
-
-lines = []
-lines.append("=" * 60)
-lines.append("Cross-Reference Report: %s" % name)
-lines.append("=" * 60)
+report.log("INFO", "Total functions to analyze: %d" % total_functions)
 
 # Collect call graph data
 call_graph = {}  # func -> {"callers": [], "callees": []}
@@ -62,72 +51,60 @@ for func in functions:
     analyzed_count += 1
 
     if analyzed_count % 500 == 0:
-        print("[DEBUG] xrefs_report.py: Analyzed %d / %d functions" % (analyzed_count, total_functions))
+        report.log("DEBUG", "Analyzed %d / %d functions" % (analyzed_count, total_functions))
 
-print("[INFO] xrefs_report.py: Call graph analysis complete - %d functions analyzed" % analyzed_count)
+report.log("INFO", "Call graph analysis complete - %d functions analyzed" % analyzed_count)
 
 # Output: functions sorted by number of callers (most-called first)
 sorted_funcs = sorted(call_graph.items(), key=lambda x: len(x[1]["callers"]), reverse=True)
 
 # High-value targets (many callers)
-lines.append("")
-lines.append("--- Most Called Functions (top 30) ---")
-lines.append("%-8s %-8s %-14s %s" % ("Callers", "Callees", "Address", "Function"))
-lines.append("-" * 60)
+report.add_section("Most Called Functions (top 30)")
+report.add("%-8s %-8s %-14s %s" % ("Callers", "Callees", "Address", "Function"))
+report.add("-" * 60)
 for fname, data in sorted_funcs[:30]:
-    lines.append("%-8d %-8d 0x%-12s %s" % (
+    report.add("%-8d %-8d 0x%-12s %s" % (
         len(data["callers"]), len(data["callees"]), data["addr"], fname
     ))
 
 if sorted_funcs:
     top_fname, top_data = sorted_funcs[0]
-    print("[INFO] xrefs_report.py: Most-called function: '%s' with %d callers" % (top_fname, len(top_data["callers"])))
+    report.log("INFO", "Most-called function: '%s' with %d callers" % (top_fname, len(top_data["callers"])))
 
 # Leaf functions (no callees - potential utility/crypto)
-lines.append("")
-lines.append("--- Leaf Functions (no callees, potential crypto/utility) ---")
+report.add_section("Leaf Functions (no callees, potential crypto/utility)")
 leaves = [(f, d) for f, d in sorted_funcs if len(d["callees"]) == 0 and not f.startswith("FUN_")]
-print("[INFO] xrefs_report.py: Found %d named leaf functions" % len(leaves))
+report.log("INFO", "Found %d named leaf functions" % len(leaves))
 for fname, data in leaves[:20]:
-    lines.append("  0x%-12s %s  (called by %d)" % (data["addr"], fname, len(data["callers"])))
+    report.add("  0x%-12s %s  (called by %d)" % (data["addr"], fname, len(data["callers"])))
 if len(leaves) > 20:
-    lines.append("  ... +%d more" % (len(leaves) - 20))
+    report.add("  ... +%d more" % (len(leaves) - 20))
 
 # Count isolated nodes
 isolated_count = 0
 
 # Full call graph detail
-lines.append("")
-lines.append("--- Full Call Graph ---")
+report.add_section("Full Call Graph")
 for fname, data in sorted_funcs:
     if len(data["callers"]) == 0 and len(data["callees"]) == 0:
         isolated_count += 1
         continue  # Skip isolated nodes
-    lines.append("")
-    lines.append("[%s] @ 0x%s" % (fname, data["addr"]))
+    report.add_blank()
+    report.add("[%s] @ 0x%s" % (fname, data["addr"]))
     if data["callers"]:
-        lines.append("  Called by: %s" % ", ".join(data["callers"][:10]))
+        report.add("  Called by: %s" % ", ".join(data["callers"][:10]))
         if len(data["callers"]) > 10:
-            lines.append("            ... +%d more" % (len(data["callers"]) - 10))
+            report.add("            ... +%d more" % (len(data["callers"]) - 10))
     if data["callees"]:
-        lines.append("  Calls:    %s" % ", ".join(data["callees"][:10]))
+        report.add("  Calls:    %s" % ", ".join(data["callees"][:10]))
         if len(data["callees"]) > 10:
-            lines.append("            ... +%d more" % (len(data["callees"]) - 10))
+            report.add("            ... +%d more" % (len(data["callees"]) - 10))
 
-print("[DEBUG] xrefs_report.py: Skipped %d isolated nodes (no callers, no callees)" % isolated_count)
+report.log("DEBUG", "Skipped %d isolated nodes (no callers, no callees)" % isolated_count)
 
-lines.append("")
-lines.append("Total: %d functions analyzed" % len(call_graph))
+report.add_blank()
+report.add("Total: %d functions analyzed" % len(call_graph))
 
-output = "\n".join(lines)
 print("[*] Analyzed %d functions" % len(call_graph))
 
-outfile = os.path.join(output_dir, "%s_xrefs.txt" % name)
-print("[DEBUG] xrefs_report.py: Writing output to '%s'" % outfile)
-try:
-    with codecs.open(outfile, "w", encoding="utf-8") as f:
-        f.write(output + "\n")
-    print("[*] Saved to %s" % outfile)
-    print("[INFO] xrefs_report.py: Script completed successfully")
-except Exception as e:
-    print("[ERROR] xrefs_report.py: Failed to write output file '%s': %s" % (outfile, str(e)))
+report.save()

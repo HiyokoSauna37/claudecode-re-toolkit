@@ -19,19 +19,22 @@ instructions: |
   | ドメインリスト | `batch-probe FILE --threads 30` |
 
   ## URL分析フロー
-  0. `preflight`
-  1. `probe "URL"` → `[Action]` 判定（`Direct` / `Use --tor` / `Skip`）。`--tor` 付きで probe したい場合はホスト側 127.0.0.1:9050 必要
+  0. `preflight`（自動実行されるが、コマンドライン操作では明示実行を推奨）
+  1. `probe "URL"` → `[Action]` 判定:
+     - `Direct` → 手順2へ
+     - `Use --tor` → `--tor "URL"` で手順2へ（ホスト側 127.0.0.1:9050 必要）
+     - `Skip` → **URL分析を中止**（exit code 2 は正常終了）。`otx domain` / `threatfox ioc` でTI検索に切り替える
   2. `"URL"` (or `--tor "URL"`) → スクリーンショット+DL+暗号化
   3. DLファイルあり → `check`/`behavior`/`bazaar hash` → Ghidra提案
   4. DLファイルなし → `classify network.csv --target DOMAIN` でネットワーク分析
   5. 不審ドメイン/IP → `otx domain`/`threatfox ioc` でTI検索
 
   ## C2フロー
-  1. `c2-profile IP:port` (VT+TF+OTX+PassiveDNS+ポートスキャン自動)
+  1. `c2-profile IP:port` (VT+TF+OTX+PassiveDNS+ポートスキャン自動 — passive DNS ピボット展開で数分かかる場合あり、コマンド自然終了まで待機)
   2. **クラスタ全体プロファイル**: `python3 tools/proxy-web/intel/c2cluster.py profile --seed IP:port` or `--tag TAG_NAME`
      - ThreatFoxタグ横展開→並列プローブ→fingerprintグループ化を一撃で実行
      - 全ノードのOPEN/FILTERED/CLOSED判定、HTMLタイトル/Server抽出、パネル候補抽出
-  3. 追加: `recon URL` / `ws probe ws://IP:port/ws` / `list URL`
+  3. 追加（c2-profile の結果を確認してから必要なものだけ実行、不要なら省略）: `recon URL` / `ws probe ws://IP:port/ws` / `list URL`
   4. パネル発見 → URL分析でキャプチャ
   5. OTXパルス発見 → `otx stats PULSE_ID` / `otx hashes PULSE_ID`
   6. 大量IOC → `batch-probe domains.txt` でアクティブなもの特定
@@ -39,7 +42,7 @@ instructions: |
   8. **threat-intel ツール一式** (`tools/proxy-web/intel/`): `c2cluster` / `c2hunt` / `threatfeed` / `iocminer` / `loghunter` / `intel` (統合ディスパッチャ) / `hunt-report.exe` (Go, 結果集約)
 
   ## ClickFix JSペイロード分析フロー
-  1. `probe --batch` で各ペイロードURLの生存確認
+  1. （省略可）URLの生存確認: `probe --batch` で複数URL、`probe "URL"` で1件 — 省略して直接 js_deobfuscate.py に進んでも可（URL不達ならスクリプト側でもエラーになる）
   2. **JSファイル取得は `--url` 推奨（ディスク書き込みなし、Defender回避）:**
      ```
      python3 tools/proxy-web/js_deobfuscate.py --url "http://domain/api/css.js"
@@ -78,7 +81,7 @@ instructions: |
   - **`proxy-web "URL"` 実行前に preflight 自動実行**（Docker 未起動なら即終了 → 3回無駄リトライなし）
     - スクリプト等で抑制したい場合: `proxy-web "URL" --skip-preflight`
     - 症状: `Docker daemon ... not running` → Docker Desktop 起動後に再実行
-  - **`c2-profile` / `probe` / `threatfox` / `otx` / `vt-ip` は Docker 不要**（純ネットワーク/API）→ preflight 不要
+  - **`c2-profile` / `probe` / `threatfox` / `otx` / `vt-ip` / `js_deobfuscate.py` / `clearfake_decode.py` は Docker 不要**（純ネットワーク/API/Python直接実行）→ preflight 不要
   - **`--tor` の要否判断**: `probe "URL"` の `[Action]` 表示（`Direct` / `Use --tor` / `Skip`）に従う。デフォルトは Direct で、必要時のみ `--tor` を付与
   - **`--tor` の挙動（コマンドで違う）**:
     - `proxy-web.exe "URL" --tor`（URL分析）→ Docker tor-proxy を自動起動（追加セットアップ不要）

@@ -3,33 +3,23 @@
 # @category Analysis
 # @runtime Jython
 
-import os
-import codecs
 from ghidra.program.model.data import StringDataInstance
+from ghidra_common import GhidraReport
 
-print("[INFO] extract_strings.py: Script started")
-
-program = currentProgram
-name = program.getName()
-output_dir = "/analysis/output"
-
-print("[INFO] extract_strings.py: Processing program='%s', output_dir='%s'" % (name, output_dir))
+report = GhidraReport("extract_strings.py", "strings", "Strings", currentProgram)
+program = report.program
 
 listing = program.getListing()
 memory = program.getMemory()
 ref_mgr = program.getReferenceManager()
 
-lines = []
-lines.append("=" * 60)
-lines.append("Strings: %s" % name)
-lines.append("=" * 60)
-lines.append("")
+report.add_blank()
 
 count = 0
 skipped_null = 0
 skipped_short = 0
 
-print("[DEBUG] extract_strings.py: Iterating over defined data for strings")
+report.log("DEBUG", "Iterating over defined data for strings")
 data_iter = listing.getDefinedData(True)
 for data in data_iter:
     sdi = StringDataInstance.getStringDataInstance(data)
@@ -63,28 +53,19 @@ for data in data_iter:
     # Escape control characters for display
     display_str = display_str.replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t")
 
-    lines.append("0x%-12s  \"%s\"" % (addr, display_str))
+    report.add("0x%-12s  \"%s\"" % (addr, display_str))
     if xref_addrs:
         for xref in xref_addrs[:5]:
-            lines.append("               <- %s" % xref)
+            report.add("               <- %s" % xref)
         if len(xref_addrs) > 5:
-            lines.append("               <- ... +%d more refs" % (len(xref_addrs) - 5))
-    lines.append("")
+            report.add("               <- ... +%d more refs" % (len(xref_addrs) - 5))
+    report.add_blank()
     count += 1
 
-print("[INFO] extract_strings.py: Extracted %d strings (skipped: %d null/empty, %d too short)" % (count, skipped_null, skipped_short))
+report.log("INFO", "Extracted %d strings (skipped: %d null/empty, %d too short)" % (count, skipped_null, skipped_short))
 
-lines.append("Total: %d strings" % count)
+report.add("Total: %d strings" % count)
 
-output = "\n".join(lines)
 print("[*] Extracted %d strings" % count)
 
-outfile = os.path.join(output_dir, "%s_strings.txt" % name)
-print("[DEBUG] extract_strings.py: Writing output to '%s'" % outfile)
-try:
-    with codecs.open(outfile, "w", encoding="utf-8") as f:
-        f.write(output + "\n")
-    print("[*] Saved to %s" % outfile)
-    print("[INFO] extract_strings.py: Script completed successfully")
-except Exception as e:
-    print("[ERROR] extract_strings.py: Failed to write output file '%s': %s" % (outfile, str(e)))
+report.save()

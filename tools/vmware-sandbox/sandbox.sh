@@ -31,7 +31,7 @@ GP="${VM_GUEST_PASS}"
 GUEST_PROFILE="${VM_GUEST_PROFILE:-C:\\Users\\${GU}}"
 GUEST_ANALYSIS_DIR="${GUEST_PROFILE}\\Desktop\\analysis"
 GUEST_TOOLS_DIR="${GUEST_PROFILE}\\Desktop\\tools"
-SNAPSHOT_CLEAN="clean_with_tools"
+SNAPSHOT_CLEAN="clean_with_tools_fakenet_ca"
 
 OUTPUT_DIR="$SCRIPT_DIR/output"
 INPUT_DIR="$SCRIPT_DIR/input"
@@ -69,15 +69,143 @@ vmrun_script() {
         runScriptInGuest "$VMX_PATH" "" "$script_cmd"
 }
 
-vm_running() {
-    "$VMRUN" list 2>/dev/null | grep -qi "$(basename "$VMX_PATH" .vmx)" && return 0 || return 1
-}
+cmd_dispatch_logger() {
+    # COM activity logger for script-based malware (VBS/JS/HTA/PowerShell)
+    # Uses Cisco Talos DispatchLogger: DLL injection + OutputDebugString capture
+    local target="$1"
+    local wait_sec="${2:-120}"
 
-ensure_running() {
+    if [ -z "$target" ]; then
+        err "Usage: sandbox.sh dispatch-logger <script_or_exe> [wait_sec]"
+        err "  Examples:"
+        err "    sandbox.sh dispatch-logger malware.vbs"
+        err "    sandbox.sh dispatch-logger malware.js 60"
+        err "    sandbox.sh dispatch-logger powershell.exe '-File C:\\analysis\\test.ps1'"
+        exit 1
+    fi
+
     if ! vm_running; then
         err "VM is not running. Start it first: sandbox.sh start"
         exit 1
     fi
+
+    local dl_dir="$SCRIPT_DIR/dispatch-logger"
+    local guest_dl_dir="${GUEST_TOOLS_DIR}\\dispatch-logger"
+    local guest_log_file="${GUEST_ANALYSIS_DIR}\\displog_output.log"
+    local local_log_file="$OUTPUT_DIR/displog_$(date +%Y%m%d_%H%M%S).log"
+    local local_parsed_file="${local_log_file%.log}_parsed.txt"
+
+    # 1. Deploy DispatchLogger tools to guest (if not already there)
+    log "Deploying DispatchLogger to guest..."
+    vmrun_script 15 "powershell.exe -NoProfile -NonInteractive -Command \"New-Item -ItemType Directory -Force -Path '$guest_dl_dir' | Out-Null\"" 2>/dev/null || true
+    vmrun_t -T ws -gu "$GU" -gp "$GP" createDirectoryInGuest "$VMX_PATH" "$GUEST_ANALYSIS_DIR" 2>/dev/null || true
+    for f in iDispLogger.dll iDispLogger64.dll injector32.exe injector64.exe; do
+        if [ -f "$dl_dir/$f" ]; then
+            vmrun_t -T ws -gu "$GU" -gp "$GP" copyFileFromHostToGuest "$VMX_PATH" \
+                "$(cygpath -w "$dl_dir/$f" 2>/dev/null || echo "$dl_dir/$f")" "${guest_dl_dir}\\${f}" 2>/dev/null || true
+        fi
+    done
+
+    # 2. Copy target to guest (if it's a local file)
+    local guest_target=""
+    if [ -f "$target" ]; then
+        local target_basename
+        target_basename=$(basename "$target")
+        vmrun_t -T ws -gu "$GU" -gp "$GP" copyFileFromHostToGuest "$VMX_PATH" \
+            "$(cygpath -w "$target" 2>/dev/null || echo "$target")" "${GUEST_ANALYSIS_DIR}\\${target_basename}"
+        guest_target="${GUEST_ANALYSIS_DIR}\\${target_basename}"
+        log "Copied $target_basename to guest"
+    else
+        guest_target="$target"
+    fi
+
+    # 3. Build injector command (64-bit by default for Windows 10/11 guest)
+    local injector_exe="${guest_dl_dir}\\injector64.exe"
+
+    # 4. Start DebugView + run injector
+    log "Starting DispatchLogger capture (timeout: ${wait_sec}s)..."
+    log "Target: $guest_target"
+
+    local ps_capture_script="
+\$ErrorActionPreference = 'SilentlyContinue'
+\$logFile = '${guest_log_file}'
+
+# Check if Dbgview.exe exists on guest for OutputDebugString capture
+\$dbgview = 'C:\\SysinternalsSuite\\Dbgview.exe'
+\$hasDbgView = Test-Path \$dbgview
+
+if (\$hasDbgView) {
+    Start-Process -FilePath \$dbgview -ArgumentList '/accepteula','/l',\$logFile,'/o','/om' -WindowStyle Hidden
+    Start-Sleep -Seconds 2
+}
+
+# Run injector (creates process suspended, injects DLL, resumes, waits)
+\$proc = Start-Process -FilePath '${injector_exe}' -ArgumentList '${guest_target}' -WorkingDirectory '${guest_dl_dir}' -Wait -PassThru -NoNewWindow -RedirectStandardOutput '${GUEST_ANALYSIS_DIR}\\displog_injector.log' -RedirectStandardError '${GUEST_ANALYSIS_DIR}\\displog_injector_err.log' 2>\$null
+
+if (\$hasDbgView) {
+    Start-Sleep -Seconds 2
+    Stop-Process -Name Dbgview -Force -ErrorAction SilentlyContinue
+}
+
+if (-not \$hasDbgView -and -not (Test-Path \$logFile)) {
+    Copy-Item '${GUEST_ANALYSIS_DIR}\\displog_injector.log' \$logFile -Force -ErrorAction SilentlyContinue
+}
+"
+    # Write PS1 to temp, copy to guest, execute
+    local ps_temp="/tmp/displog_capture_$$.ps1"
+    printf '%s' "$ps_capture_script" > "$ps_temp"
+    local guest_ps="${GUEST_ANALYSIS_DIR}\\displog_capture.ps1"
+    vmrun_t -T ws -gu "$GU" -gp "$GP" copyFileFromHostToGuest "$VMX_PATH" \
+        "$(cygpath -w "$ps_temp" 2>/dev/null || echo "$ps_temp")" "$guest_ps"
+    rm -f "$ps_temp"
+
+    log "Executing in guest VM..."
+    timeout "$wait_sec" "$VMRUN" -T ws -gu "$GU" -gp "$GP" \
+        runScriptInGuest "$VMX_PATH" "" \
+        "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"$guest_ps\"" 2>/dev/null || {
+        warn "Capture timed out after ${wait_sec}s (this is normal for long-running scripts)"
+    }
+
+    # 5. Retrieve logs
+    log "Retrieving logs from guest..."
+    mkdir -p "$OUTPUT_DIR"
+    vmrun_t -T ws -gu "$GU" -gp "$GP" copyFileFromGuestToHost "$VMX_PATH" \
+        "$guest_log_file" "$local_log_file" 2>/dev/null || true
+    vmrun_t -T ws -gu "$GU" -gp "$GP" copyFileFromGuestToHost "$VMX_PATH" \
+        "${GUEST_ANALYSIS_DIR}\\displog_injector.log" "${local_log_file%.log}_injector.log" 2>/dev/null || true
+
+    # 6. Parse log with log_parser.py
+    if [ -f "$local_log_file" ] && [ -s "$local_log_file" ]; then
+        log "Raw log: $local_log_file"
+        if [ -f "$dl_dir/log_parser.py" ]; then
+            python3 "$dl_dir/log_parser.py" "$local_log_file" > "$local_parsed_file" 2>/dev/null
+            if [ -s "$local_parsed_file" ]; then
+                log "Parsed COM activity: $local_parsed_file"
+                echo "=== Reconstructed COM Activity ==="
+                cat "$local_parsed_file"
+            else
+                warn "No COM activity reconstructed (target may not use COM)"
+            fi
+        else
+            warn "log_parser.py not found, showing raw log"
+            cat "$local_log_file"
+        fi
+    else
+        warn "No DispatchLogger output captured."
+        warn "Possible reasons:"
+        warn "  - Target does not use COM (native EXE without script layer)"
+        warn "  - DebugView (Sysinternals) not installed on guest"
+        warn "  - DLL injection failed (check injector log)"
+        local injector_log="${local_log_file%.log}_injector.log"
+        if [ -f "$injector_log" ] && [ -s "$injector_log" ]; then
+            echo "=== Injector Output ==="
+            cat "$injector_log"
+        fi
+    fi
+}
+
+vm_running() {
+    "$VMRUN" list 2>/dev/null | grep -qi "$(basename "$VMX_PATH" .vmx)" && return 0 || return 1
 }
 
 cmd_start() {
@@ -467,54 +595,6 @@ Write-Output "Guest hardening complete"
     log "Guest-side hardening complete"
 }
 
-cmd_install_dnspy() {
-    log "Installing dnSpy in guest VM..."
-    ensure_running
-
-    local dnspy_dir="${GUEST_TOOLS_DIR}\\dnSpy"
-    local dnspy_exe="${dnspy_dir}\\dnSpy.exe"
-
-    # Check if already installed
-    local check_result
-    check_result=$(vmrun_script 15 "powershell.exe -NoProfile -Command \"Test-Path '${dnspy_exe}'\"" 2>/dev/null || echo "False")
-    if echo "$check_result" | grep -qi "True"; then
-        log "dnSpy is already installed at ${dnspy_exe}"
-        return 0
-    fi
-
-    log "Downloading dnSpy to guest..."
-    # dnSpy latest release (64-bit) - download directly in guest via PowerShell
-    vmrun_script 120 "powershell.exe -NoProfile -Command \"\
-        \$url = 'https://github.com/dnSpyEx/dnSpy/releases/latest/download/dnSpy-net-win64.zip'; \
-        \$zip = '${GUEST_ANALYSIS_DIR}\\dnSpy.zip'; \
-        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; \
-        Invoke-WebRequest -Uri \$url -OutFile \$zip; \
-        New-Item -ItemType Directory -Force -Path '${dnspy_dir}' | Out-Null; \
-        Expand-Archive -Path \$zip -DestinationPath '${dnspy_dir}' -Force; \
-        Remove-Item \$zip -Force; \
-        Write-Output 'dnSpy installed successfully'\""
-
-    log "dnSpy installed at ${dnspy_exe}"
-    log "NOTE: Take a new snapshot to persist: sandbox.sh snapshot clean_with_tools"
-}
-
-cmd_run_dnspy() {
-    local guest_target="$1"
-    if [ -z "$guest_target" ]; then
-        err "Usage: sandbox.sh dnspy <guest_binary_path>"
-        err "  Opens .NET binary in dnSpy for analysis"
-        err "  Example: sandbox.sh dnspy '${GUEST_ANALYSIS_DIR}\\malware.exe'"
-        exit 1
-    fi
-    ensure_running
-    local dnspy_exe="${GUEST_TOOLS_DIR}\\dnSpy\\dnSpy.exe"
-    log "Opening dnSpy with: $guest_target"
-    vmrun_t -T ws -gu "$GU" -gp "$GP" runProgramInGuest "$VMX_PATH" \
-        -activeWindow -noWait "$dnspy_exe" "$guest_target" 2>/dev/null || {
-        warn "dnSpy launch returned non-zero (may still be running). Check: sandbox.sh install-dnspy"
-    }
-}
-
 cmd_guest_tools() {
     log "Checking guest tools..."
     local ps_cmd
@@ -523,8 +603,7 @@ cmd_guest_tools() {
     ps_cmd+="\"${GUEST_TOOLS_DIR}\\hollows_hunter64.exe\","
     ps_cmd+="\"${GUEST_TOOLS_DIR}\\memdump-racer.exe\","
     ps_cmd+="\"${GUEST_TOOLS_DIR}\\x64dbg\\release\\x64\\x64dbg.exe\","
-    ps_cmd+="\"${GUEST_TOOLS_DIR}\\procmon\\Procmon.exe\","
-    ps_cmd+="\"${GUEST_TOOLS_DIR}\\dnSpy\\dnSpy.exe\""
+    ps_cmd+="\"${GUEST_TOOLS_DIR}\\procmon\\Procmon.exe\""
     ps_cmd+='); foreach ($p in $paths) { $e = Test-Path $p; Write-Output "$e : $p" }'
 
     vmrun_t -T ws -gu "$GU" -gp "$GP" runProgramInGuest "$VMX_PATH" \
@@ -543,7 +622,7 @@ cmd_memdump() {
 
     if [ -z "$guest_target" ]; then
         err "Usage: sandbox.sh memdump <guest_target_path> [delays_csv] [guest_outdir]"
-        err "Example: sandbox.sh memdump 'C:\\analysis\\install.exe'"
+        err "Example: sandbox.sh memdump '<GUEST_ANALYSIS_DIR>\\install.exe'"
         exit 1
     fi
 
@@ -577,10 +656,18 @@ cmd_memdump() {
 }
 
 cmd_analyze() {
-    local binary="$1"
-    local wait_time="${2:-60}"
+    local json_out=false
+    local _pos=()
+    for _arg in "$@"; do
+        case "$_arg" in
+            --json|-j) json_out=true ;;
+            *) _pos+=("$_arg") ;;
+        esac
+    done
+    local binary="${_pos[0]}"
+    local wait_time="${_pos[1]:-60}"
     if [ -z "$binary" ]; then
-        err "Usage: sandbox.sh analyze <binary_path|encrypted.enc.gz> [wait_seconds=60]"
+        err "Usage: sandbox.sh analyze <binary_path|encrypted.enc.gz> [wait_seconds=60] [--json|-j]"
         exit 1
     fi
 
@@ -730,6 +817,13 @@ EOPS
     python "$NET_ISOLATE" nat --no-restart
     "$VMRUN" -T ws start "$VMX_PATH" nogui
     log "VM reverted and NAT restored."
+
+    if $json_out; then
+        local _diff_count=0
+        _diff_count=$(grep -c '^[<>]' "$result_dir/processes_diff.txt" 2>/dev/null || echo 0)
+        printf '{"binary":"%s","result_dir":"%s","guest_ip":"%s","wait_sec":%s,"process_changes":%s}\n' \
+            "$exe_name" "$result_dir" "$ip" "$wait_time" "$_diff_count"
+    fi
 }
 
 # ============================================================
@@ -1438,12 +1532,10 @@ case "${1:-}" in
     net-disconnect) cmd_net_disconnect ;;
     net-status)     cmd_net_status ;;
     guest-tools)    cmd_guest_tools ;;
-    install-dnspy)  cmd_install_dnspy ;;
-    dnspy)          cmd_run_dnspy "$2" ;;
     harden-vmx)     cmd_harden_vmx ;;
     harden-guest)   cmd_harden_guest ;;
     memdump)        cmd_memdump "$2" "$3" "$4" ;;
-    analyze)        cmd_analyze "$2" "$3" ;;
+    analyze)        cmd_analyze "${@:2}" ;;
     unpack)         cmd_unpack "$2" "$3" ;;
     run-script)     cmd_run_script "$2" "$3" ;;
     set-clock)      shift; cmd_set_clock "$@" ;;
@@ -1467,6 +1559,10 @@ case "${1:-}" in
         log "Analyzing Regshot diff: $2"
         python3 "$SCRIPT_DIR/regshot_diff.py" "$2"
         ;;
+    dispatch-logger)
+        cmd_dispatch_logger "$2" "$3"
+        ;;
+
     evasion-check)
         log "Running sandbox evasion check on guest..."
         # Copy and run the evasion checker on guest
@@ -1491,7 +1587,7 @@ case "${1:-}" in
             warn "Could not retrieve report. Check VM GUI for results."
         fi
         ;;
-    *)
+    help|--help|-h)
         echo "VMware Sandbox - Dynamic Malware Analysis"
         echo ""
         echo "Usage: bash Tools/vmware-sandbox/sandbox.sh <command> [args]"
@@ -1564,8 +1660,19 @@ case "${1:-}" in
         echo "                                 --template vidar-config|vidar-client|generic-json"
         echo "                                 --list-templates for all options"
         echo ""
+        echo "COM Monitoring (Script Malware):"
+        echo "  dispatch-logger <target> [wait]"
+        echo "                                 Inject DispatchLogger DLL & capture COM calls"
+        echo "                                 target: .vbs/.js/.hta file or exe path"
+        echo "                                 Requires Dbgview.exe on guest (Sysinternals)"
+        echo ""
         echo "Post-Analysis:"
         echo "  regshot-diff <export.txt>      Analyze Regshot diff for persistence indicators"
         echo "  evasion-check                  Run sandbox evasion diagnostic on guest VM"
+        ;;
+    *)
+        echo "sandbox.sh: unknown command '$1'" >&2
+        echo "Run: bash tools/vmware-sandbox/sandbox.sh help" >&2
+        exit 1
         ;;
 esac

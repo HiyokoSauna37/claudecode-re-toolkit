@@ -1,0 +1,458 @@
+package orchestrator
+
+import (
+	"context"
+	"crypto/tls"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/url"
+	"strings"
+	"time"
+)
+
+const (
+	probeTimeout  = 15 * time.Second
+	maxRedirects  = 10
+	torSOCKS5Addr = "127.0.0.1:9050"
+)
+
+// FailureMode indicates how the connection failed.
+type FailureMode int
+
+const (
+	FailureNone    FailureMode = iota // no failure
+	FailureRefused                    // connection actively refused (port closed)
+	FailureTimeout                    // connection timed out (port filtered/firewalled)
+	FailureDNS                        // DNS resolution failed
+	FailureOther                      // other error
+)
+
+func (f FailureMode) String() string {
+	switch f {
+	case FailureRefused:
+		return "REFUSED"
+	case FailureTimeout:
+		return "TIMEOUT"
+	case FailureDNS:
+		return "DNS_FAIL"
+	case FailureOther:
+		return "ERROR"
+	default:
+		return "OK"
+	}
+}
+
+// classifyError determines the failure mode from an error string.
+func classifyError(errStr string) FailureMode {
+	lower := strings.ToLower(errStr)
+	switch {
+	case strings.Contains(lower, "actively refused") ||
+		strings.Contains(lower, "connection refused") ||
+		strings.Contains(lower, "connectex: no connection"):
+		return FailureRefused
+	case strings.Contains(lower, "deadline exceeded") ||
+		strings.Contains(lower, "timeout") ||
+		strings.Contains(lower, "i/o timeout"):
+		return FailureTimeout
+	case strings.Contains(lower, "no such host") ||
+		strings.Contains(lower, "dns") ||
+		strings.Contains(lower, "resolve"):
+		return FailureDNS
+	default:
+		return FailureOther
+	}
+}
+
+// ProbeResult holds the result of a single HTTP probe.
+type ProbeResult struct {
+	Label         string
+	StatusCode    int
+	FinalURL      string
+	RedirectChain []string
+	ContentType   string
+	Server        string
+	Error         string
+	Blocked       bool
+	Failure       FailureMode
+}
+
+// ProbeReport is the full report from probing a URL (direct + optional Tor).
+type ProbeReport struct {
+	TargetURL string
+	Hostname  string
+	DNSAddrs  []string
+	DNSError  string
+	Direct    ProbeResult
+	Tor       *ProbeResult // nil if --tor not used
+	Analysis  string
+	// Recommendation for proxy-web execution
+	Recommend ProbeRecommendation
+}
+
+type ProbeRecommendation int
+
+const (
+	RecommendDirect    ProbeRecommendation = iota // proceed without --tor
+	RecommendTor                                  // use --tor
+	RecommendSkip                                 // site is down, skip
+)
+
+var blockIndicators = []string{
+	"fortinet", "fortigate", "web filter",
+	"url has been blocked", "web rating",
+	"fortiguard", "blocked by",
+}
+
+func isFortiGateBlock(body string, headers http.Header) bool {
+	bodyLower := strings.ToLower(body)
+	for _, indicator := range blockIndicators {
+		if strings.Contains(bodyLower, indicator) {
+			return true
+		}
+	}
+	server := strings.ToLower(headers.Get("Server"))
+	return strings.Contains(server, "fortinet") || strings.Contains(server, "fortigate")
+}
+
+func buildProbeClient(useTor bool) (*http.Client, error) {
+	tlsConfig := &tls.Config{InsecureSkipVerify: true}
+
+	var transport *http.Transport
+
+	if useTor {
+		// SOCKS5 via Tor — use raw TCP dialer (no golang.org/x/net dependency)
+		transport = &http.Transport{
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				// Connect to Tor SOCKS5 proxy using CONNECT method
+				d := net.Dialer{Timeout: probeTimeout}
+				conn, err := d.DialContext(ctx, "tcp", torSOCKS5Addr)
+				if err != nil {
+					return nil, fmt.Errorf("tor socks5 connect: %w", err)
+				}
+				// SOCKS5 handshake (no auth)
+				// Version(5), NumMethods(1), NoAuth(0)
+				if _, err := conn.Write([]byte{0x05, 0x01, 0x00}); err != nil {
+					conn.Close()
+					return nil, err
+				}
+				resp := make([]byte, 2)
+				if _, err := io.ReadFull(conn, resp); err != nil {
+					conn.Close()
+					return nil, err
+				}
+				if resp[0] != 0x05 || resp[1] != 0x00 {
+					conn.Close()
+					return nil, fmt.Errorf("socks5 auth failed: %x", resp)
+				}
+				// SOCKS5 CONNECT request
+				host, port, _ := net.SplitHostPort(addr)
+				if host == "" {
+					host = addr
+					port = "80"
+				}
+				portNum := 0
+				fmt.Sscanf(port, "%d", &portNum)
+
+				req := []byte{0x05, 0x01, 0x00, 0x03, byte(len(host))}
+				req = append(req, []byte(host)...)
+				req = append(req, byte(portNum>>8), byte(portNum&0xff))
+				if _, err := conn.Write(req); err != nil {
+					conn.Close()
+					return nil, err
+				}
+				connResp := make([]byte, 4)
+				if _, err := io.ReadFull(conn, connResp); err != nil {
+					conn.Close()
+					return nil, err
+				}
+				if connResp[1] != 0x00 {
+					conn.Close()
+					return nil, fmt.Errorf("socks5 connect failed: status %d", connResp[1])
+				}
+				// Read remaining address bytes
+				switch connResp[3] {
+				case 0x01: // IPv4
+					buf := make([]byte, 4+2)
+					io.ReadFull(conn, buf)
+				case 0x03: // Domain
+					lenBuf := make([]byte, 1)
+					io.ReadFull(conn, lenBuf)
+					buf := make([]byte, int(lenBuf[0])+2)
+					io.ReadFull(conn, buf)
+				case 0x04: // IPv6
+					buf := make([]byte, 16+2)
+					io.ReadFull(conn, buf)
+				}
+				return conn, nil
+			},
+			TLSClientConfig:   tlsConfig,
+			DisableKeepAlives: true,
+		}
+	} else {
+		transport = &http.Transport{
+			TLSClientConfig:   tlsConfig,
+			DisableKeepAlives: true,
+		}
+	}
+
+	client := &http.Client{
+		Transport: transport,
+		Timeout:   probeTimeout,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= maxRedirects {
+				return fmt.Errorf("too many redirects (%d)", maxRedirects)
+			}
+			return nil
+		},
+	}
+	return client, nil
+}
+
+func doProbe(targetURL string, useTor bool, label string) ProbeResult {
+	result := ProbeResult{Label: label}
+
+	httpClient, err := buildProbeClient(useTor)
+	if err != nil {
+		result.Error = err.Error()
+		result.Failure = classifyError(result.Error)
+		return result
+	}
+
+	var chain []string
+	httpClient.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if len(via) >= maxRedirects {
+			return fmt.Errorf("too many redirects (%d)", maxRedirects)
+		}
+		chain = append(chain, req.URL.String())
+		return nil
+	}
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, targetURL, nil)
+	if err != nil {
+		result.Error = err.Error()
+		return result
+	}
+	req.Header.Set("User-Agent", CommonUserAgent)
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		result.Error = err.Error()
+		result.Failure = classifyError(result.Error)
+		return result
+	}
+	defer resp.Body.Close()
+
+	bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	body := string(bodyBytes)
+
+	result.StatusCode = resp.StatusCode
+	result.FinalURL = resp.Request.URL.String()
+	result.RedirectChain = chain
+	result.ContentType = resp.Header.Get("Content-Type")
+	result.Server = resp.Header.Get("Server")
+	result.Blocked = isFortiGateBlock(body, resp.Header)
+
+	return result
+}
+
+// RunProbe performs URL pre-check: DNS resolution, direct HTTP probe, optional Tor probe.
+func RunProbe(rawURL string, useTor bool) *ProbeReport {
+	targetURL := Refang(rawURL)
+
+	parsed, err := url.Parse(targetURL)
+	if err != nil {
+		return &ProbeReport{
+			TargetURL: targetURL,
+			DNSError:  fmt.Sprintf("invalid URL: %v", err),
+			Recommend: RecommendSkip,
+		}
+	}
+
+	hostname := parsed.Hostname()
+	report := &ProbeReport{
+		TargetURL: targetURL,
+		Hostname:  hostname,
+	}
+
+	// DNS lookup
+	ips, err := net.LookupHost(hostname)
+	if err != nil {
+		report.DNSError = err.Error()
+		report.Recommend = RecommendSkip
+		report.Analysis = "DNS resolution failed — site is unreachable"
+		return report
+	}
+	report.DNSAddrs = ips
+
+	// Direct probe
+	report.Direct = doProbe(targetURL, false, "Direct")
+
+	// Tor probe (if requested)
+	if useTor {
+		torResult := doProbe(targetURL, true, "Tor")
+		report.Tor = &torResult
+
+		// Analysis
+		if report.Direct.Blocked && !torResult.Blocked && torResult.StatusCode > 0 {
+			report.Analysis = "Direct access blocked by FortiGate, Tor succeeded — transparent proxy filtering"
+			report.Recommend = RecommendTor
+		} else if report.Direct.Error != "" && torResult.StatusCode > 0 {
+			report.Analysis = "Direct access failed, Tor succeeded — network-level blocking"
+			report.Recommend = RecommendTor
+		} else if report.Direct.Error != "" && torResult.Error != "" {
+			report.Analysis = "Both direct and Tor failed — site appears down"
+			report.Recommend = RecommendSkip
+		} else {
+			report.Analysis = "No filtering detected"
+			report.Recommend = RecommendDirect
+		}
+	} else {
+		// No Tor comparison
+		if report.Direct.Error != "" {
+			report.Analysis = "Direct access failed — consider retrying with --tor"
+			report.Recommend = RecommendSkip
+		} else if report.Direct.Blocked {
+			report.Analysis = "FortiGate block detected — retry with --tor"
+			report.Recommend = RecommendTor
+		} else {
+			report.Analysis = "Direct access OK"
+			report.Recommend = RecommendDirect
+		}
+	}
+
+	return report
+}
+
+// PrintProbeReport outputs the probe report to stdout with ANSI colors.
+// ANSI colors: see color.go
+func PrintProbeReport(r *ProbeReport) {
+	fmt.Printf("\n%s=== proxy-web probe ===%s\n", cCyan, cReset)
+	fmt.Printf("Target: %s\n", r.TargetURL)
+
+	// DNS
+	fmt.Printf("%s[DNS]%s %s -> ", cCyan, cReset, r.Hostname)
+	if r.DNSError != "" {
+		fmt.Printf("%sRESOLVE FAILED: %s%s\n", cRed, r.DNSError, cReset)
+	} else {
+		fmt.Printf("%s%s%s\n", cGreen, strings.Join(r.DNSAddrs, ", "), cReset)
+	}
+
+	// Direct
+	printProbeResult(r.Direct)
+
+	// Tor
+	if r.Tor != nil {
+		printProbeResult(*r.Tor)
+	}
+
+	// Analysis
+	color := cGreen
+	if r.Recommend == RecommendTor {
+		color = cYellow
+	} else if r.Recommend == RecommendSkip {
+		color = cRed
+	}
+	fmt.Printf("\n%s[Analysis]%s %s%s%s\n", cCyan, cReset, color, r.Analysis, cReset)
+
+	// Recommendation
+	fmt.Printf("%s[Action]%s ", cCyan, cReset)
+	switch r.Recommend {
+	case RecommendDirect:
+		fmt.Printf("%sProceed with proxy-web (no --tor needed)%s\n", cGreen, cReset)
+	case RecommendTor:
+		fmt.Printf("%sUse proxy-web with --tor%s\n", cYellow, cReset)
+	case RecommendSkip:
+		fmt.Printf("%sSkip proxy-web — target unreachable%s\n", cRed, cReset)
+	}
+	fmt.Println()
+}
+
+func printProbeResult(r ProbeResult) {
+	fmt.Printf("\n%s[%s]%s ", cCyan, r.Label, cReset)
+	if r.Error != "" {
+		modeLabel := r.Failure.String()
+		fmt.Printf("%s%s: %s%s\n", cRed, modeLabel, r.Error, cReset)
+		if r.Failure == FailureTimeout {
+			fmt.Printf("  %s↳ Port is FILTERED (firewall dropping packets — host may be alive behind IP whitelist)%s\n", cYellow, cReset)
+		} else if r.Failure == FailureRefused {
+			fmt.Printf("  %s↳ Port is CLOSED (service not running)%s\n", cGray, cReset)
+		}
+		return
+	}
+
+	sc := cGreen
+	if r.StatusCode >= 400 {
+		sc = cRed
+	} else if r.StatusCode >= 300 {
+		sc = cYellow
+	}
+
+	fmt.Printf("HTTP %s%d%s", sc, r.StatusCode, cReset)
+	if r.Blocked {
+		fmt.Printf("  %s** BLOCKED (FortiGate detected) **%s", cRed, cReset)
+	}
+	fmt.Println()
+
+	if len(r.RedirectChain) > 0 {
+		fmt.Printf("  Redirect chain:\n")
+		for i, u := range r.RedirectChain {
+			fmt.Printf("    %s%d.%s %s\n", cGray, i+1, cReset, u)
+		}
+	}
+	if r.FinalURL != "" {
+		fmt.Printf("  Final URL:     %s\n", r.FinalURL)
+	}
+	if r.ContentType != "" {
+		fmt.Printf("  Content-Type:  %s\n", r.ContentType)
+	}
+	if r.Server != "" {
+		fmt.Printf("  Server:        %s\n", r.Server)
+	}
+}
+
+// PrintProbeJSON returns the probe report as JSON bytes.
+func PrintProbeJSON(r *ProbeReport) ([]byte, error) {
+	actionStr := "Direct"
+	switch r.Recommend {
+	case RecommendTor:
+		actionStr = "Use --tor"
+	case RecommendSkip:
+		actionStr = "Skip"
+	}
+
+	probeToMap := func(pr ProbeResult) map[string]interface{} {
+		m := map[string]interface{}{
+			"status_code": pr.StatusCode,
+			"final_url":   pr.FinalURL,
+			"server":      pr.Server,
+			"blocked":     pr.Blocked,
+		}
+		if pr.Error != "" {
+			m["error"] = pr.Error
+			m["failure"] = pr.Failure.String()
+		}
+		if len(pr.RedirectChain) > 0 {
+			m["redirect_chain"] = pr.RedirectChain
+		}
+		return m
+	}
+
+	result := map[string]interface{}{
+		"url":       r.TargetURL,
+		"hostname":  r.Hostname,
+		"dns_addrs": r.DNSAddrs,
+		"analysis":  r.Analysis,
+		"action":    actionStr,
+		"direct":    probeToMap(r.Direct),
+	}
+	if r.DNSError != "" {
+		result["dns_error"] = r.DNSError
+	}
+	if r.Tor != nil {
+		result["tor"] = probeToMap(*r.Tor)
+	}
+	return json.Marshal(result)
+}

@@ -160,6 +160,7 @@ Go-based CLI tool for safe web forensics:
 - VirusTotal, MalwareBazaar, ThreatFox, OTX integration
 - C2 auto-profiling (VT + ThreatFox + OTX + Passive DNS + port scan)
 - Cluster-wide C2 profiling via `c2cluster.py` (ThreatFox tag expansion, fingerprint-based hunting)
+- Threat-intel tool suite under `tools/proxy-web/intel/` — `c2hunt`, `threatfeed`, `iocminer`, `loghunter`, `intel` dispatcher, `hunt-report.exe` (Go aggregator)
 - ClickFix detection and JS deobfuscation (`js_deobfuscate.py --url` for disk-less analysis)
 - ClearFake Polygon-blockchain C2 decoder (`clearfake_decode.py`)
 - Network log classification (BLOCKCHAIN_RPC, C2_API, TRACKER, etc.)
@@ -181,10 +182,12 @@ Docker-based Ghidra automation:
 - Analyzer + Reviewer agent team for quality-assured analysis sessions
 - Kali Linux container with radare2 for quick triage, entropy analysis, crypto detection, and binary diffing
 - Helper scripts: `lnk-parser.py` (LNK triage), `pe-encrypt.py` (.enc.gz generator for VM transfer), `chunk-extract.py` (.rdata embedded binary extraction)
+- Automatic command logging — every `ghidra.sh` invocation appends to `tools/ghidra-headless/logs/YYYYMMDD_<target>.md`; review with `ghidra.sh log-show <binary>`
 
 ### vmware-sandbox
 
 VMware Workstation VM automation:
+- One-command `analyze` workflow that auto-handles snapshot revert, Host-Only network isolation, malware copy, pre/post snapshots, HollowsHunter scan, and final revert (no manual `start` / `net-isolate` needed)
 - 3-Level Unpacking System (memdump-racer → TinyTracer → x64dbg)
 - Frida DBI with anti-debug bypass and memory dumping (with preflight check for guest Frida install)
 - DispatchLogger COM monitoring for script-based malware (VBS, JS, HTA, PowerShell, Office macros)

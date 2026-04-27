@@ -45,7 +45,7 @@ func FetchDirectoryListing(rawURL string) ([]ListingEntry, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+	req.Header.Set("User-Agent", CommonUserAgent)
 
 	resp, err := client.Do(req)
 	if err != nil {

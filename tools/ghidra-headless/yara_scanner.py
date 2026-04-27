@@ -157,8 +157,10 @@ def main():
                         help=f"YARA rules directory (default: {DEFAULT_RULES_DIR})")
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR,
                         help=f"Output directory (default: {DEFAULT_OUTPUT_DIR})")
-    parser.add_argument("--json-only", action="store_true",
-                        help="Output JSON only (no summary)")
+    parser.add_argument("--json", "-j", action="store_true", dest="json_output",
+                        help="Output JSON only to stdout (no human summary)")
+    parser.add_argument("--json-only", action="store_true",  # backward compat alias
+                        help=argparse.SUPPRESS)
     args = parser.parse_args()
 
     binary_path = Path(args.binary)
@@ -176,7 +178,11 @@ def main():
 
     # Scan
     print(f"\nScanning: {binary_path}")
-    matches = scan_binary(rules, binary_path)
+    try:
+        matches = scan_binary(rules, binary_path)
+    except Exception as e:
+        print(f"Error: YARA scan failed: {e}", file=sys.stderr)
+        sys.exit(1)
 
     # Build output
     binary_name = binary_path.stem
@@ -199,10 +205,10 @@ def main():
     print(f"\nJSON saved: {output_file}")
 
     # Print summary
-    if not args.json_only:
+    if not (args.json_only or args.json_output):
         print_summary(matches, binary_path.name)
 
-    return 0 if matches else 0
+    return 0
 
 
 if __name__ == "__main__":

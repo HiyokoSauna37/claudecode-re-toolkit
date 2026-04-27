@@ -25,6 +25,10 @@ TOOL_VERSION = "1.0.0"
 SCRIPT_DIR = Path(__file__).parent
 DEFAULT_OUTPUT_DIR = SCRIPT_DIR / "output"
 
+# Ensure shared modules are importable
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
 # =============================================================================
 # Regex Patterns
 # =============================================================================
@@ -95,12 +99,17 @@ C_RUNTIME_STRINGS = {
     "system_error", "bad_alloc", "bad_cast",
 }
 
-# Common benign domains
+# Common benign domains (includes .NET namespace false positives like system.io)
 BENIGN_DOMAINS = {
     "microsoft.com", "windows.com", "google.com", "github.com",
     "mozilla.org", "w3.org", "xml.org", "apache.org",
     "openssl.org", "sqlite.org", "python.org",
     "sysinternals.com", "visualstudio.com",
+    # .NET namespace false positives (appear as domains in C# source)
+    "system.io", "system.net", "system.text", "system.threading",
+    "system.collections", "system.diagnostics", "system.runtime",
+    "system.security", "system.reflection", "system.componentmodel",
+    "system.linq", "system.globalization", "system.resources",
 }
 
 # Hash false positive patterns
@@ -134,27 +143,7 @@ def is_ghidra_artifact(text: str) -> bool:
 # File Discovery
 # =============================================================================
 
-def find_ghidra_outputs(binary_name: str, output_dir: Path) -> dict:
-    """Find Ghidra output files for a given binary name."""
-    files = {}
-    suffixes = {
-        "strings": "_strings.txt",
-        "imports": "_imports.txt",
-        "exports": "_exports.txt",
-        "decompiled": "_decompiled.c",
-        "decompiled_functions": "_decompiled_functions.c",
-        "info": "_info.txt",
-        "functions": "_functions.txt",
-        "xrefs": "_xrefs.txt",
-        "decrypted_strings": "_decrypted_strings.txt",
-    }
-
-    for key, suffix in suffixes.items():
-        path = output_dir / f"{binary_name}{suffix}"
-        if path.exists():
-            files[key] = path
-
-    return files
+from ghidra_output_utils import find_ghidra_outputs  # shared utility
 
 
 # =============================================================================

@@ -3,16 +3,10 @@
 # @category Analysis
 # @runtime Jython
 
-import os
-import codecs
+from ghidra_common import GhidraReport
 
-print("[INFO] list_imports.py: Script started")
-
-program = currentProgram
-name = program.getName()
-output_dir = "/analysis/output"
-
-print("[INFO] list_imports.py: Processing program='%s', output_dir='%s'" % (name, output_dir))
+report = GhidraReport("list_imports.py", "imports", "Import Table", currentProgram)
+program = report.program
 
 # Suspicious Windows API patterns for malware triage
 SUSPICIOUS_APIS = set([
@@ -56,22 +50,18 @@ SUSPICIOUS_APIS = set([
     "StartService", "ControlService", "OpenSCManager",
 ])
 
-print("[DEBUG] list_imports.py: Loaded %d suspicious API patterns" % len(SUSPICIOUS_APIS))
+report.log("DEBUG", "Loaded %d suspicious API patterns" % len(SUSPICIOUS_APIS))
 
 fm = program.getFunctionManager()
 ext_funcs = fm.getExternalFunctions()
 
-lines = []
-lines.append("=" * 60)
-lines.append("Import Table: %s" % name)
-lines.append("=" * 60)
-lines.append("")
+report.add_blank()
 
 # Group by library
 imports = {}
 suspicious_found = []
 
-print("[DEBUG] list_imports.py: Enumerating external functions")
+report.log("DEBUG", "Enumerating external functions")
 for func in ext_funcs:
     ext_loc = func.getExternalLocation()
     lib = ext_loc.getLibraryName() or "<unknown>"
@@ -85,43 +75,34 @@ for func in ext_funcs:
     base_name = fname.rstrip("AW")  # Strip A/W suffix for matching
     if fname in SUSPICIOUS_APIS or base_name in SUSPICIOUS_APIS:
         suspicious_found.append((lib, fname))
-        print("[DEBUG] list_imports.py: Suspicious API found: [%s] %s" % (lib, fname))
+        report.log("DEBUG", "Suspicious API found: [%s] %s" % (lib, fname))
 
-print("[INFO] list_imports.py: Found %d libraries with imports" % len(imports))
+report.log("INFO", "Found %d libraries with imports" % len(imports))
 
 # Output grouped by library
 for lib in sorted(imports.keys()):
-    lines.append("[%s]" % lib)
+    report.add("[%s]" % lib)
     for fname in sorted(imports[lib]):
         flag = " *** SUSPICIOUS ***" if any(f == fname for _, f in suspicious_found) else ""
-        lines.append("  %s%s" % (fname, flag))
-    lines.append("")
+        report.add("  %s%s" % (fname, flag))
+    report.add_blank()
 
 # Suspicious summary
 if suspicious_found:
-    lines.append("=" * 60)
-    lines.append("!!! SUSPICIOUS API IMPORTS (%d) !!!" % len(suspicious_found))
-    lines.append("=" * 60)
+    report.add("=" * 60)
+    report.add("!!! SUSPICIOUS API IMPORTS (%d) !!!" % len(suspicious_found))
+    report.add("=" * 60)
     for lib, fname in sorted(suspicious_found):
-        lines.append("  [%s] %s" % (lib, fname))
-    print("[INFO] list_imports.py: %d suspicious APIs detected" % len(suspicious_found))
+        report.add("  [%s] %s" % (lib, fname))
+    report.log("INFO", "%d suspicious APIs detected" % len(suspicious_found))
 else:
-    lines.append("[*] No suspicious API imports detected.")
-    print("[INFO] list_imports.py: No suspicious APIs detected")
+    report.add("[*] No suspicious API imports detected.")
+    report.log("INFO", "No suspicious APIs detected")
 
-lines.append("")
+report.add_blank()
 total = sum(len(v) for v in imports.values())
-lines.append("Total: %d imports from %d libraries" % (total, len(imports)))
+report.add("Total: %d imports from %d libraries" % (total, len(imports)))
 
-output = "\n".join(lines)
 print("[*] %d imports, %d suspicious" % (total, len(suspicious_found)))
 
-outfile = os.path.join(output_dir, "%s_imports.txt" % name)
-print("[DEBUG] list_imports.py: Writing output to '%s'" % outfile)
-try:
-    with codecs.open(outfile, "w", encoding="utf-8") as f:
-        f.write(output + "\n")
-    print("[*] Saved to %s" % outfile)
-    print("[INFO] list_imports.py: Script completed successfully")
-except Exception as e:
-    print("[ERROR] list_imports.py: Failed to write output file '%s': %s" % (outfile, str(e)))
+report.save()

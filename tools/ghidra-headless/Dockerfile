@@ -9,8 +9,10 @@ RUN apk add --no-cache \
     python3 \
     py3-pip \
     py3-cryptography \
-    gcompat && \
-    pip3 install --break-system-packages python-dotenv
+    gcompat \
+    p7zip \
+    file && \
+    pip3 install --break-system-packages python-dotenv yara-python
 
 # Download and install Ghidra 11.2
 ENV GHIDRA_VERSION=12.0.3 \
@@ -29,6 +31,11 @@ COPY scripts/ /opt/ghidra-scripts/
 
 # Copy quarantine decryption script
 COPY decrypt_quarantine.py /opt/ghidra-scripts/decrypt_quarantine.py
+
+# Fix decompiler permissions: needs +r for dynamic loader, +x for execution
+# (must be done before switching to non-root user)
+RUN chmod +rx /opt/ghidra/Ghidra/Features/Decompiler/os/linux_x86_64/decompile || true && \
+    chmod +rx /opt/ghidra/Ghidra/Features/Decompiler/os/linux_arm_64/decompile || true
 
 # Create non-root user for container security
 RUN addgroup -S ghidra && adduser -S ghidra -G ghidra

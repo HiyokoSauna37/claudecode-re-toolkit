@@ -185,11 +185,17 @@ Config: loaded from .env (VM_VMX_PATH, VM_GUEST_USER, VM_GUEST_PASS, VM_GUEST_PR
 func main() {
 	if len(os.Args) < 2 {
 		printUsage()
-		os.Exit(1)
+		os.Exit(0)
 	}
 
 	args := os.Args[1:]
 	timeout := defaultTimeout
+
+	// Handle --help / -h / help before any other parsing
+	if args[0] == "--help" || args[0] == "-h" || args[0] == "help" {
+		printUsage()
+		os.Exit(0)
+	}
 
 	// Parse --timeout
 	if len(args) >= 2 && args[0] == "--timeout" {

@@ -159,7 +159,7 @@ git config user.email | grep -q "users.noreply.github.com" && echo OK || echo "W
 Claude Agent SDK 経由のテスト出力や GUI のアップロードファイルは **ホストの絶対パス（cwd 等）を含む**。`.gitignore` で除外済みだが、新規の test/debug 出力ファイルを追加する際は必ず gitignore に追加する。
 
 #### コミットメッセージにも注意
-メッセージ本文に `C:\Users\shima` のような literal を書かないこと（過去にverificationログで混入した）。プレースホルダ表記に統一。
+メッセージ本文に `C:\Users\<host-user>` のような literal を書かないこと（過去にverificationログで混入した）。プレースホルダ表記に統一。
 
 #### 新規 skill / ツール追加時のチェック
 - SKILL.md 内に個人ユーザー名・実メール・具体的な `C:\Users\<本名系>\...` パスを書かない
