@@ -1,0 +1,8 @@
+services:
+  mergen:
+    build: .
+    container_name: mergen
+    volumes:
+      - ./output:/work/output
+    entrypoint: ["sleep", "infinity"]
+    restart: unless-stopped

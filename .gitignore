@@ -1,6 +1,8 @@
 # Binaries (general)
 *.exe~
 *.dll
+!tools/malware-sandbox/dispatch-logger/iDispLogger.dll
+!tools/malware-sandbox/dispatch-logger/iDispLogger64.dll
 *.so
 *.dylib
 
@@ -13,6 +15,10 @@
 !tools/malware-sandbox/decrypt-tool/decrypt-tool.exe
 !tools/malware-sandbox/sandbox-evasion-check/sandbox-evasion-check.exe
 !tools/malware-sandbox/vm-detect-checker/vm-detect-checker.exe
+!tools/malware-sandbox/dispatch-logger/injector32.exe
+!tools/malware-sandbox/dispatch-logger/injector64.exe
+!tools/dotnet-decompiler/dotnet-decompile.exe
+!tools/quarantine/quarantine.exe
 
 # Test binary
 *.test
@@ -49,6 +55,7 @@ tools/ghidra-headless/output/*
 !tools/ghidra-headless/output/.gitkeep
 tools/malware-sandbox/output/*
 !tools/malware-sandbox/output/.gitkeep
+tools/dotnet-decompiler/output/
 
 # Logs
 tools/malware-fetch/logs/*
