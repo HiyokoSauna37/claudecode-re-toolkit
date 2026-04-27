@@ -101,12 +101,17 @@ bash tools/ghidra-headless/ghidra.sh output grep "connect" sample_strings.txt
 ## analyze-full パイプライン
 
 ```
-Phase 0: PE Triage（ホスト、数秒）→ Verdictで戦略調整
-Phase 1（並列）: Agent A=YARA, Agent B=CAPA, Agent C=Ghidra analyze
-Phase 2（Agent C完了後）: IOC Extraction → Classification
-Phase 3: watchtowr-reportスキルでレポート生成
-Phase 4: reviewerで見落とし検出
+Phase 0: PE Triage（ホスト、数秒）→ Verdict で戦略調整
+Phase 1: YARA Scan（コンテナ内）
+Phase 2: CAPA Analysis（ホスト）
+Phase 3: Ghidra Analysis（コンテナ内、デコンパイル含む）
+Phase 4: IOC Extraction（ホスト、Ghidra 出力をパース）
+Phase 5: Malware Classification（ホスト、IOC + 文字列から分類）
 ```
+
+**実装はシーケンシャル**（Phase 1→2→3→4→5）。各 Phase は "non-critical, continuing" で続行するため一部失敗しても他は完走する。Ghidra Analysis は Phase 3 のため YARA/CAPA より遅れて完了する → ユーザー報告は段階的に。
+
+**watchtowr-report / reviewer は analyze-full のパイプライン外**。analyze-full 完了後、ユーザー側で `watchtowr-report` スキルを別途呼び出してレポート化、必要なら reviewer 系で見落とし検出する。
 
 **Phase 0 は analyze-full が内包する** — `analyze-full` を打つなら事前の `pe-triage` 単独実行は不要。
 
@@ -134,8 +139,11 @@ Ghidra でデコンパイルする前に .NET バイナリかチェック。3つ
 **判別タイミング:** `pe-triage` は PE パッカー検出のみで .NET 判定はしない（CLI Stream シグナルは出ない）。事前情報なしの検体は `ghidra.sh info <binary>` を 1 回打って CLI Stream の有無を確認 → .NET なら dotnet-decompile、通常 PE なら analyze-full に分岐。VT タグで事前に `.NET` と分かっていれば pe-triage すらスキップして直接 dotnet-decompile でよい。
 
 .NET 確定 → `ghidra.sh decompile` はスキップし `ghidra.sh dotnet-decompile <binary>` を使う（Ghidra のデコンパイラは CLR を認識できない）。
-初回セットアップ: `docker compose -f tools/dotnet-decompiler/docker-compose.yml up -d --build`
-稼働確認（2回目以降）: `docker compose -f tools/dotnet-decompiler/docker-compose.yml ps`（停止中なら `up -d` で再起動）
+
+**前提: `tools/dotnet-decompiler/dotnet-decompile.exe` が必須**（Go バイナリ、ホスト実行）。docker-compose ベースではない。
+- 不在時のエラー: `Error: dotnet-decompile.exe not found. Build with: cd tools/dotnet-decompiler && go build -o dotnet-decompile.exe .`
+- 初回ビルド: `cd tools/dotnet-decompiler && go build -trimpath -ldflags="-s -w" -o dotnet-decompile.exe .`
+- このリポジトリには `tools/dotnet-decompiler/` が同梱されていない場合がある → ソースの所在は別途確認、不在のまま `dotnet-decompile` を呼ぶと即終了する。
 
 **.NET でも `pe-triage` / `yara-scan` / `capa` は有効**: .NET バイナリは PE ヘッダを持つので、ConfuserEx / Costura / SmartAssembly 等の .NET パッカー検出は pe-triage で可能。YARA/CAPA も .NET に対応（CAPA は `dotnet` バックエンドを使う）。
 
@@ -200,12 +208,13 @@ pip install pefile yara-python                    # PE Triage + YARA
 choco install die                                 # オプション: DiEパッカー検出
 # capa: https://github.com/mandiant/capa/releases からバイナリをPATHに配置
 bash tools/ghidra-headless/ghidra.sh start        # Ghidraコンテナ初回ビルド
-docker compose -f tools/dotnet-decompiler/docker-compose.yml up -d --build  # .NET用
+# .NET 解析を使うなら（Go バイナリ、ソースが同梱されていない場合は要取得）:
+cd tools/dotnet-decompiler && go build -trimpath -ldflags="-s -w" -o dotnet-decompile.exe .
 ```
 
 ## Knowledge Base
 
-KB-1〜KB-23 → [references/kb-entries.md](references/kb-entries.md)
+KB-1〜KB-18, KB-22-23 → [references/kb-entries.md](references/kb-entries.md)（KB-19/20/21 は現状欠番）
 
 | KB | 内容 |
 |---|---|
@@ -222,8 +231,6 @@ KB-1〜KB-23 → [references/kb-entries.md](references/kb-entries.md)
 | 16 | .NETバイナリ解析ガイド |
 | 17 | Ghidraデコンパイラ権限エラー修正 |
 | 18 | .NETパイプライン改善 |
-| 19-20 | ツール改善（dexec/output/auto_detect/binary_info/decompile_all） |
-| 21 | Kimwolf: ARM32 Android botnet |
 | **22** | **AdaptixC2 beacon 解析パターン**（C++ Connector/HTTP RTTI / DJB2 variant hash seed=0x624 / RC4 profile / Pack=BE & Unpack=LE 非対称 / 動的 API 解決ビーコンには CAPA が無効） |
 | **23** | **Ghidra プロジェクトロック**（per-invocation suffix 化済 → 並列実行 OK）と **pe-triage `.enc.gz` の MSYS パスバグ → in-container 自動切替** |
 
