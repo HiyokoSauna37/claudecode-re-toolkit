@@ -142,16 +142,18 @@ Ghidra でデコンパイルする前に .NET バイナリかチェック。3つ
 
 **構成**: `tools/dotnet-decompiler/dotnet-decompile.exe`（Go ラッパー）が docker compose 経由で `dotnet-decompiler` コンテナを起動し、コンテナ内で ILSpy CLI (`ilspycmd` 8.2) を実行する。`.enc.gz` はコンテナ内で `decrypt_quarantine.py` により復号 → ILSpy 解析 → output volume (`./output`) でホストに回収。
 
-初回セットアップ（両方必須）:
+初回セットアップ:
 ```bash
-# 1. Go ラッパーをビルド (CLAUDE.md ルール: -trimpath 必須)
+# 1. Go ラッパーをビルド (必須、CLAUDE.md ルール: -trimpath 必須)
 cd tools/dotnet-decompiler && go build -trimpath -ldflags="-s -w" -o dotnet-decompile.exe .
 
-# 2. Docker イメージをビルド (.NET SDK 8 + .NET 6 runtime + ilspycmd 8.2 + Python3)
+# 2. Docker イメージをビルド (image 未ビルドの環境のみ、約 1.22GB / 5-10分)
 docker compose -f tools/dotnet-decompiler/docker-compose.yml up -d --build
 ```
 
-稼働確認（2回目以降）: `docker compose -f tools/dotnet-decompiler/docker-compose.yml ps`（停止中の場合 `dotnet-decompile.exe` が自動で `ensureRunning` する）
+**Docker image はホスト全体 (daemon 単位) で共有される** — 別 repo (例: life repo) で同じ basename `dotnet-decompiler/` から既にビルド済みなら image (`dotnet-decompiler-dotnet-decompiler:latest`) を再利用できるので Step 2 はスキップ可。先に `tools/dotnet-decompiler/dotnet-decompile.exe preflight` を打って Docker daemon / Container / ilspycmd / QUARANTINE_PASSWORD が全 OK ならビルド不要。
+
+稼働確認: `tools/dotnet-decompiler/dotnet-decompile.exe preflight`（停止中なら `dotnet-decompile.exe` 自体が `ensureRunning` で自動 `up`）
 不在時のエラー: `Error: dotnet-decompile.exe not found. Build with: cd tools/dotnet-decompiler && go build -o dotnet-decompile.exe .`
 
 **.NET でも `pe-triage` / `yara-scan` / `capa` は有効**: .NET バイナリは PE ヘッダを持つので、ConfuserEx / Costura / SmartAssembly 等の .NET パッカー検出は pe-triage で可能。YARA/CAPA も .NET に対応（CAPA は `dotnet` バックエンドを使う）。
@@ -217,9 +219,12 @@ pip install pefile yara-python                    # PE Triage + YARA
 choco install die                                 # オプション: DiEパッカー検出
 # capa: https://github.com/mandiant/capa/releases からバイナリをPATHに配置
 bash tools/ghidra-headless/ghidra.sh start        # Ghidraコンテナ初回ビルド
-# .NET 解析を使うなら（Go ラッパー + Docker イメージ両方）:
+# .NET 解析を使うなら:
 cd tools/dotnet-decompiler && go build -trimpath -ldflags="-s -w" -o dotnet-decompile.exe .
+# Docker image — 別 repo で同じ basename `dotnet-decompiler/` から既にビルド済みなら image はホスト共有なのでスキップ可:
 docker compose -f tools/dotnet-decompiler/docker-compose.yml up -d --build
+# 状態確認 (image / container / ilspycmd / .env が全て OK なら build 不要):
+tools/dotnet-decompiler/dotnet-decompile.exe preflight
 ```
 
 ## Knowledge Base
