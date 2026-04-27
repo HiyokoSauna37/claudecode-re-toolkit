@@ -112,7 +112,9 @@ Phase 4: reviewerで見落とし検出
 
 **pe-triage を単独で先打ちすべきケース（analyze-full の前に Verdict 先読み）:**
 - 大サイズ (50MB+) or 低インポート数 (10 DLL 未満) でパッカー疑惑濃厚 → 数分の analyze-full を走らせる前に打ち切り判断
-- **迷ったら（未知検体・事前情報なしの場合を含む）`analyze-full` 直行で OK**（Phase 0 Verdict が PACKER_DETECTED のときはパイプライン内で malware-sandbox 提案が出る）
+- **迷ったら（未知検体・事前情報なしの場合を含む）`analyze-full` 直行で OK**
+
+**analyze-full 中の PACKER_DETECTED 挙動**: パイプラインに自動中断ロジックは無く、PACKER_DETECTED が出ても Phase 1〜5（YARA / CAPA / Ghidra / IOC / 分類）は **すべて完走する**（各ステップは "non-critical, continuing" で続行）。Phase 0 の `<binary>_triage.json` を読んで `verdict == PACKER_DETECTED:*` の場合、**ユーザー側で** Phase 1 以降の出力を見て ROI 低と判断したら malware-sandbox に切り替える。
 
 YARA/CAPA は Docker 不要・Ghidra と独立。先に完了したら即ユーザーへ **中間報告** すること:
 - YARA 完了 → ファミリ名・ルール一致数を報告
@@ -183,6 +185,7 @@ tools/quarantine/quarantine.exe analyze 1         # 復号+Ghidra解析
 | 種別 | パス |
 |---|---|
 | Ghidra結果 | `tools/ghidra-headless/output/<binary>_<種別>.txt/.c` |
+| PE Triage | `<binary>_triage.json` |
 | YARA | `<binary>_yara.json` |
 | CAPA | `<binary>_capa.json` |
 | IOC | `<binary>_iocs.json` |
