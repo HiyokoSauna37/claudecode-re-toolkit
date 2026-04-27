@@ -41,6 +41,8 @@ python --version 2>/dev/null                                      # Python
 ls tools/ghidra-headless/yara-rules/ 2>/dev/null                  # YARA rules
 pip show yara-python 2>/dev/null                                  # yara-python
 pip show flare-capa 2>/dev/null                                   # flare-capa
+pip show flare-floss 2>/dev/null                                  # flare-floss (FLOSS, 新機能)
+pip show dumpulator 2>/dev/null                                   # dumpulator (新機能)
 ```
 
 診断結果を以下の形式で表示:

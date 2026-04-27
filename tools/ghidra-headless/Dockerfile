@@ -11,8 +11,10 @@ RUN apk add --no-cache \
     py3-cryptography \
     gcompat \
     p7zip \
-    file && \
-    pip3 install --break-system-packages python-dotenv yara-python
+    file \
+    py3-numpy \
+    py3-matplotlib && \
+    pip3 install --break-system-packages python-dotenv yara-python oletools
 
 # Download and install Ghidra 11.2
 ENV GHIDRA_VERSION=12.0.3 \

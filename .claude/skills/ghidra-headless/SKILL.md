@@ -62,11 +62,15 @@ bash tools/ghidra-headless/ghidra.sh xrefs <binary>                           # 
 
 ### ポスト解析
 ```bash
+bash tools/ghidra-headless/ghidra.sh pe-triage <binary>       # PEトリアージ（pefile + DiE）
+bash tools/ghidra-headless/ghidra.sh floss <binary>           # FLOSS難読化文字列解除（stack/decoded strings）
+bash tools/ghidra-headless/ghidra.sh viz <binary>             # バイナリ可視化（エントロピー+bigram PNG）
+bash tools/ghidra-headless/ghidra.sh office-analyze <file>    # Officeマクロ解析（VBA/OLE, oletools）
 bash tools/ghidra-headless/ghidra.sh yara-scan <binary>       # YARAスキャン（APT帰属/ファミリ判定）
 bash tools/ghidra-headless/ghidra.sh capa <binary>            # CAPA（capability+ATT&CKマッピング）
 bash tools/ghidra-headless/ghidra.sh ioc-extract <binary>     # IOC自動抽出（IP/Domain/URL/Hash等）
 bash tools/ghidra-headless/ghidra.sh classify <binary>        # マルウェア種別自動分類
-bash tools/ghidra-headless/ghidra.sh analyze-full <binary>    # フルパイプライン（Phase 0-4）
+bash tools/ghidra-headless/ghidra.sh analyze-full <binary>    # フルパイプライン（Phase 0-7）
 ```
 
 ### AdaptixC2 ビーコン専用（KB-22 参照）
@@ -102,16 +106,19 @@ bash tools/ghidra-headless/ghidra.sh output grep "connect" sample_strings.txt
 
 ```
 Phase 0: PE Triage（ホスト、数秒）→ Verdict で戦略調整
-Phase 1: YARA Scan（コンテナ内）
-Phase 2: CAPA Analysis（ホスト）
-Phase 3: Ghidra Analysis（コンテナ内、デコンパイル含む）
-Phase 4: IOC Extraction（ホスト、Ghidra 出力をパース）
-Phase 5: Malware Classification（ホスト、IOC + 文字列から分類）
+Phase 1: FLOSS（ホスト）→ stack strings / decoded strings 抽出（XOR/難読化解除）
+Phase 2: Binary Visualization（コンテナ内）→ エントロピープロファイル + bigram PNG
+Phase 2b: Office Document（自動検出時のみ）→ oletools: VBA macro / auto-exec 分析
+Phase 3: YARA Scan（コンテナ内）
+Phase 4: CAPA Analysis（ホスト）
+Phase 5: Ghidra Analysis（コンテナ内、デコンパイル含む）
+Phase 6: IOC Extraction（ホスト、Ghidra 出力をパース）
+Phase 7: Malware Classification（ホスト、IOC + 文字列から分類）
 ```
 
-**実装はシーケンシャル**（Phase 1→2→3→4→5）。各 Phase は "non-critical, continuing" で続行するため一部失敗しても他は完走する。Ghidra Analysis は Phase 3 のため YARA/CAPA より遅れて完了する → ユーザー報告は段階的に。
+**実装はシーケンシャル**（Phase 0→7）。各 Phase は "non-critical, continuing" で続行するため一部失敗しても他は完走する。Ghidra Analysis は Phase 5 のため FLOSS/YARA/CAPA より遅れて完了する → ユーザー報告は段階的に。
 
-**watchtowr-report / reviewer は analyze-full のパイプライン外**（shell から skill を自動呼び出しできないため）。ただし `analyze-full` 完了時に「Next step (manual)」セクションを表示し、`watchtowr-report` への入力アーティファクト (`<binary>_triage/yara/capa/iocs/classification.json`) のフルパスを列挙するため、そのまま skill 呼び出しに渡せる。reviewer 系は report 生成後に別途依頼。
+**watchtowr-report / reviewer は analyze-full のパイプライン外**（shell から skill を自動呼び出しできないため）。ただし `analyze-full` 完了時に「Next step (manual)」セクションを表示し、`watchtowr-report` への入力アーティファクトのフルパスを列挙するため、そのまま skill 呼び出しに渡せる。reviewer 系は report 生成後に別途依頼。
 
 **Phase 0 は analyze-full が内包する** — `analyze-full` を打つなら事前の `pe-triage` 単独実行は不要。
 

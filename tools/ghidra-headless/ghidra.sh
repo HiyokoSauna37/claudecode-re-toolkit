@@ -494,6 +494,67 @@ case "${1:-}" in
         python3 "$SCRIPT_DIR_WIN/malware_classifier.py" "$clf_target" --output-dir "$SCRIPT_DIR_WIN/output"
         ;;
 
+    # --- FLOSS obfuscated string analysis (host-side) ---
+    floss)
+        [ -z "$2" ] && { echo "Usage: ghidra.sh floss <binary|file.enc.gz>"; exit 1; }
+        echo "=== FLOSS Analysis: $(basename "$2") ==="
+        run_host_tool "$2" floss_analyzer.py --output-dir "$SCRIPT_DIR_WIN/output"
+        ;;
+
+    # --- Office document analysis (oletools, in-container) ---
+    office-analyze)
+        if [ -z "$2" ]; then
+            echo "Usage: ghidra.sh office-analyze <file|file.enc.gz>"
+            echo "  Analyzes .doc .xls .docx .xlsm .rtf .msg for VBA macros and auto-exec triggers."
+            exit 1
+        fi
+        ensure_running
+        resolve_binary "$2" || exit 1
+        _off_target="$RESOLVED_BINARY"
+        _off_bname=$(basename "${2%.enc.gz}")
+        _off_bname="${_off_bname%.*}"
+        echo "=== Office Analysis: $(basename "$2") ==="
+        docker cp "$SCRIPT_DIR_WIN/office_analyzer.py" "$CONTAINER:/tmp/office_analyzer.py"
+        dexec "$CONTAINER" mkdir -p /tmp/output
+        if dexec "$CONTAINER" python3 /tmp/office_analyzer.py "$_off_target" \
+            --output-dir /tmp/output; then
+            mkdir -p "$SCRIPT_DIR_WIN/output"
+            docker cp "$CONTAINER:/tmp/output/." "$SCRIPT_DIR_WIN/output/" 2>/dev/null || true
+            echo "=== Results in: $SCRIPT_DIR_WIN/output/ ==="
+        else
+            rc=$?
+            cleanup_resolved
+            exit $rc
+        fi
+        cleanup_resolved
+        ;;
+
+    # --- Binary visualization (entropy profile, bigram, histogram) ---
+    viz)
+        if [ -z "$2" ]; then
+            echo "Usage: ghidra.sh viz <binary|file.enc.gz> [--no-plot]"
+            echo "  Generates entropy profile, bigram heatmap, byte histogram."
+            echo "  Outputs: <name>_viz.json and <name>_viz.png (if matplotlib available)"
+            exit 1
+        fi
+        ensure_running
+        resolve_binary "$2" || exit 1
+        _viz_target="$RESOLVED_BINARY"
+        _viz_bname=$(basename "${2%.enc.gz}")
+        _viz_bname="${_viz_bname%.*}"
+        _viz_noplot=""
+        [ "${3:-}" = "--no-plot" ] && _viz_noplot="--no-plot"
+        echo "=== Binary Visualization: $(basename "$2") ==="
+        docker cp "$SCRIPT_DIR_WIN/binary_viz.py" "$CONTAINER:/tmp/binary_viz.py"
+        dexec "$CONTAINER" mkdir -p /tmp/output
+        dexec "$CONTAINER" python3 /tmp/binary_viz.py "$_viz_target" \
+            --output-dir /tmp/output $_viz_noplot
+        mkdir -p "$SCRIPT_DIR_WIN/output"
+        docker cp "$CONTAINER:/tmp/output/." "$SCRIPT_DIR_WIN/output/" 2>/dev/null || true
+        echo "=== Results in: $SCRIPT_DIR_WIN/output/ ==="
+        cleanup_resolved
+        ;;
+
     # --- Full pipeline ---
     analyze-full)
         if [ -z "$2" ]; then
@@ -524,13 +585,49 @@ case "${1:-}" in
         # Run pipeline steps directly (no recursive shell invocation)
         PIPELINE_ERRORS=()
 
-        echo "[0/5] PE Triage..."
+        echo "[0/7] PE Triage..."
         if ! python3 "$SCRIPT_DIR_WIN/pe_triage.py" "$HOST_BINARY" --output-dir "$SCRIPT_DIR_WIN/output" 2>&1; then
             echo "[!] PE Triage failed (non-critical, continuing)" >&2
             PIPELINE_ERRORS+=("PE-Triage")
         fi
 
-        echo "[1/5] YARA Scan..."
+        echo "[1/7] FLOSS Obfuscated String Analysis..."
+        if python3 "$SCRIPT_DIR_WIN/floss_analyzer.py" "$HOST_BINARY" --output-dir "$SCRIPT_DIR_WIN/output" 2>&1; then
+            echo "[+] FLOSS complete" >&2
+        else
+            echo "[!] FLOSS skipped (install: pip install flare-floss)" >&2
+            PIPELINE_ERRORS+=("FLOSS")
+        fi
+
+        echo "[2/7] Binary Visualization..."
+        docker cp "$SCRIPT_DIR_WIN/binary_viz.py" "$CONTAINER:/tmp/binary_viz.py"
+        dexec "$CONTAINER" mkdir -p /tmp/output
+        if dexec "$CONTAINER" python3 /tmp/binary_viz.py "$PIPELINE_BINARY" \
+            --output-dir /tmp/output 2>&1; then
+            docker cp "$CONTAINER:/tmp/output/" "$SCRIPT_DIR_WIN/output/" 2>/dev/null || true
+        else
+            echo "[!] Binary viz failed (non-critical, continuing)" >&2
+            PIPELINE_ERRORS+=("BinaryViz")
+        fi
+
+        # Auto-detect Office documents and run oletools
+        _host_ext="${HOST_BINARY##*.}"
+        _host_ext=$(echo "$_host_ext" | tr '[:upper:]' '[:lower:]')
+        case "$_host_ext" in
+            doc|dot|xls|xlt|ppt|docx|docm|dotm|xlsx|xlsm|xltm|pptx|pptm|rtf|msg)
+                echo "[2b/7] Office Document Detected — running oletools..."
+                docker cp "$SCRIPT_DIR_WIN/office_analyzer.py" "$CONTAINER:/tmp/office_analyzer.py"
+                if dexec "$CONTAINER" python3 /tmp/office_analyzer.py "$PIPELINE_BINARY" \
+                    --output-dir /tmp/output 2>&1; then
+                    docker cp "$CONTAINER:/tmp/output/" "$SCRIPT_DIR_WIN/output/" 2>/dev/null || true
+                else
+                    echo "[!] Office analysis failed (non-critical)" >&2
+                    PIPELINE_ERRORS+=("OleTools")
+                fi
+                ;;
+        esac
+
+        echo "[3/7] YARA Scan..."
         docker cp "$SCRIPT_DIR_WIN/yara_scanner.py" "$CONTAINER:/tmp/yara_scanner.py"
         docker cp "$SCRIPT_DIR_WIN/yara-rules" "$CONTAINER:/tmp/yara-rules"
         dexec "$CONTAINER" mkdir -p /tmp/output
@@ -541,25 +638,25 @@ case "${1:-}" in
         fi
         docker cp "$CONTAINER:/tmp/output/" "$SCRIPT_DIR_WIN/output/" 2>/dev/null || true
 
-        echo "[2/5] CAPA Analysis..."
+        echo "[4/7] CAPA Analysis..."
         if ! python3 "$SCRIPT_DIR_WIN/capa_scanner.py" "$HOST_BINARY" --output-dir "$SCRIPT_DIR_WIN/output" 2>&1; then
             echo "[!] CAPA analysis failed (non-critical, continuing)" >&2
             PIPELINE_ERRORS+=("CAPA")
         fi
 
-        echo "[3/5] Ghidra Analysis..."
+        echo "[5/7] Ghidra Analysis..."
         if ! run_headless "$PIPELINE_BINARY" "${ALL_SCRIPTS[@]}"; then
             echo "[!] Ghidra analysis failed" >&2
             PIPELINE_ERRORS+=("Ghidra")
         fi
 
-        echo "[4/5] IOC Extraction..."
+        echo "[6/7] IOC Extraction..."
         if ! python3 "$SCRIPT_DIR_WIN/ioc_extractor.py" "$BINARY_NAME" --output-dir "$SCRIPT_DIR_WIN/output" 2>&1; then
             echo "[!] IOC extraction failed (non-critical, continuing)" >&2
             PIPELINE_ERRORS+=("IOC-Extraction")
         fi
 
-        echo "[5/5] Malware Classification..."
+        echo "[7/7] Malware Classification..."
         if ! python3 "$SCRIPT_DIR_WIN/malware_classifier.py" "$BINARY_NAME" --output-dir "$SCRIPT_DIR_WIN/output" 2>&1; then
             echo "[!] Classification failed (non-critical, continuing)" >&2
             PIPELINE_ERRORS+=("Classification")
@@ -577,8 +674,11 @@ case "${1:-}" in
         # Next-step guidance (skill chain is not auto-invokable from shell)
         echo ""
         echo "=== Next step (manual) ==="
+        echo "Generate sandbox hints: bash tools/malware-sandbox/sandbox.sh hint $SCRIPT_DIR_WIN/output"
         echo "Generate narrative report: invoke 'watchtowr-report' skill in Claude Code with these artifacts:"
-        for _f in "${BINARY_NAME}_triage.json" "${BINARY_NAME}_yara.json" "${BINARY_NAME}_capa.json" "${BINARY_NAME}_iocs.json" "${BINARY_NAME}_classification.json"; do
+        for _f in "${BINARY_NAME}_triage.json" "${BINARY_NAME}_floss.json" "${BINARY_NAME}_viz.json" \
+                   "${BINARY_NAME}_yara.json" "${BINARY_NAME}_capa.json" \
+                   "${BINARY_NAME}_iocs.json" "${BINARY_NAME}_classification.json"; do
             if [ -f "$SCRIPT_DIR_WIN/output/$_f" ]; then
                 echo "  - $SCRIPT_DIR_WIN/output/$_f"
             fi
@@ -762,12 +862,21 @@ Ghidra Analysis (Docker container):
 Post-Analysis (host-side):
   pe-triage <binary>              PE Triage (pefile + DiE CLI)
   pe-triage --in-container <path> PE Triage on a file already inside the container
+  floss <binary>                  FLOSS obfuscated string extraction (stack/decoded strings)
   yara-scan <binary>              YARA scan (APT attribution)
   yara-scan --in-container <path> YARA scan on a file already inside the container
   capa <binary>                   CAPA (capabilities + ATT&CK)
   ioc-extract <name>              Extract IOCs from output files
   classify <name>                 Classify malware type
-  analyze-full <binary>           Full pipeline (all of the above)
+  analyze-full <binary>           Full pipeline (all of the above, 7 steps)
+
+Office Document Analysis (in-container, oletools):
+  office-analyze <file>           VBA macro + auto-exec + OLE stream analysis
+                                  (.doc .xls .docx .xlsm .rtf .msg .ppt etc.)
+
+Binary Visualization (in-container):
+  viz <binary> [--no-plot]        Entropy profile + bigram heatmap + byte histogram
+                                  Outputs: <name>_viz.json + <name>_viz.png
 
 .NET Analysis (ILSpy Docker):
   dotnet-decompile <binary>       Decompile to C# source
