@@ -168,7 +168,12 @@ run_headless() {
     shift
     local scripts=("$@")
 
-    local cmd=("$GHIDRA_BIN" "$PROJECT_DIR" "$PROJECT_NAME"
+    # Per-invocation unique project name → multiple ghidra.sh commands in
+    # parallel no longer collide on `tmp_project` lock (KB-23). -deleteProject
+    # ensures we don't accumulate stale projects.
+    local proj_name="${PROJECT_NAME}_$$_$(date +%s%N)"
+
+    local cmd=("$GHIDRA_BIN" "$PROJECT_DIR" "$proj_name"
         -import "$binary_container_path"
         -overwrite -deleteProject
         -analysisTimeoutPerFile "$TIMEOUT"
@@ -432,6 +437,13 @@ case "${1:-}" in
         # Usage:
         #   ghidra.sh pe-triage <host-path-or-.enc.gz>
         #   ghidra.sh pe-triage --in-container <container-absolute-path>
+        #
+        # Path policy:
+        #   - .enc.gz files are decrypted INSIDE the container, then pe_triage.py
+        #     is executed INSIDE the container. The plaintext binary never lands on
+        #     the host (and we avoid MSYS path-mangling of `C:\Users\...\Temp\...`
+        #     when handing off to host Python — see KB-22).
+        #   - Plain host binaries still run host-side (fast path).
         if [ -z "$2" ]; then
             echo "Usage: ghidra.sh pe-triage <binary|file.enc.gz>"
             echo "       ghidra.sh pe-triage --in-container <container-path>"
@@ -450,20 +462,36 @@ case "${1:-}" in
             dexec "$CONTAINER" python3 /tmp/pe_triage.py "$3" --output-dir /tmp/output
             mkdir -p "$SCRIPT_DIR_WIN/output"
             docker cp "$CONTAINER:/tmp/output/." "$SCRIPT_DIR_WIN/output/" 2>/dev/null || true
+        elif [[ "$2" == *.enc.gz ]]; then
+            # Auto-route .enc.gz through in-container path (avoids MSYS host-path bug).
+            ensure_running
+            resolve_binary "$2" || exit 1
+            local_target="$RESOLVED_BINARY"
+            echo "=== PE Triage (in-container, auto-decrypted): $(basename "$2") ==="
+            docker cp "$SCRIPT_DIR_WIN/pe_triage.py" "$CONTAINER:/tmp/pe_triage.py"
+            dexec "$CONTAINER" mkdir -p /tmp/output
+            dexec "$CONTAINER" python3 /tmp/pe_triage.py "$local_target" --output-dir /tmp/output
+            mkdir -p "$SCRIPT_DIR_WIN/output"
+            docker cp "$CONTAINER:/tmp/output/." "$SCRIPT_DIR_WIN/output/" 2>/dev/null || true
+            cleanup_resolved
         else
             echo "=== PE Triage: $(basename "$2") ==="
             run_host_tool "$2" pe_triage.py --output-dir "$SCRIPT_DIR_WIN/output"
         fi
         ;;
     ioc-extract)
-        [ -z "$2" ] && { echo "Usage: ghidra.sh ioc-extract <binary_name>"; exit 1; }
-        echo "=== IOC Extraction: $2 ==="
-        python3 "$SCRIPT_DIR_WIN/ioc_extractor.py" "$2" --output-dir "$SCRIPT_DIR_WIN/output"
+        [ -z "$2" ] && { echo "Usage: ghidra.sh ioc-extract <binary_name|file.enc.gz|host-path>"; exit 1; }
+        # Accept full paths and .enc.gz: ioc_extractor.py needs the bare basename
+        # (the Ghidra output files are named after the binary without the .enc.gz suffix).
+        ioc_target=$(basename "${2%.enc.gz}")
+        echo "=== IOC Extraction: $ioc_target ==="
+        python3 "$SCRIPT_DIR_WIN/ioc_extractor.py" "$ioc_target" --output-dir "$SCRIPT_DIR_WIN/output"
         ;;
     classify)
-        [ -z "$2" ] && { echo "Usage: ghidra.sh classify <binary_name>"; exit 1; }
-        echo "=== Malware Classification: $2 ==="
-        python3 "$SCRIPT_DIR_WIN/malware_classifier.py" "$2" --output-dir "$SCRIPT_DIR_WIN/output"
+        [ -z "$2" ] && { echo "Usage: ghidra.sh classify <binary_name|file.enc.gz|host-path>"; exit 1; }
+        clf_target=$(basename "${2%.enc.gz}")
+        echo "=== Malware Classification: $clf_target ==="
+        python3 "$SCRIPT_DIR_WIN/malware_classifier.py" "$clf_target" --output-dir "$SCRIPT_DIR_WIN/output"
         ;;
 
     # --- Full pipeline ---
@@ -544,6 +572,66 @@ case "${1:-}" in
             echo "=== Partial results in: $SCRIPT_DIR_WIN/output/ ==="
         else
             echo "=== Pipeline Complete. Results in: $SCRIPT_DIR_WIN/output/ ==="
+        fi
+        ;;
+
+    # --- AdaptixC2 beacon analysis ---
+    # adaptix-profile:
+    #   Extract embedded RC4-encrypted HTTP/SMB/TCP/DNS profile from an AdaptixC2
+    #   beacon. .enc.gz inputs are decrypted INSIDE the container; the plaintext
+    #   binary never lands on the host. Output JSON is saved to output/.
+    #
+    # adaptix-hash-match:
+    #   Map all hash constants observed in agent.x64.exe_decompiled.c to API
+    #   names using a bundled snapshot of AdaptixC2/ApiDefines.h. Requires the
+    #   binary to have already been processed by `analyze` or `decompile`.
+    adaptix-profile)
+        [ -z "$2" ] && { echo "Usage: ghidra.sh adaptix-profile <binary|file.enc.gz>"; exit 1; }
+        ensure_running
+        resolve_binary "$2" || exit 1
+        ax_target="$RESOLVED_BINARY"
+        ax_bname=$(basename "${2%.enc.gz}")
+        ax_bname="${ax_bname%.*}"
+        echo "=== AdaptixC2 Profile Extraction: $(basename "$2") ===" >&2
+        docker cp "$SCRIPT_DIR_WIN/scripts/adaptix_profile_extract.py" "$CONTAINER:/tmp/adaptix_profile_extract.py"
+        mkdir -p "$SCRIPT_DIR_WIN/output"
+        out_json="$SCRIPT_DIR_WIN/output/${ax_bname}_profile.json"
+        if dexec "$CONTAINER" python3 /tmp/adaptix_profile_extract.py "$ax_target" > "$out_json"; then
+            echo "[*] Saved: $out_json" >&2
+            cat "$out_json"
+        else
+            rc=$?
+            echo "[!] adaptix_profile_extract.py failed (rc=$rc) — pass --profile-rva / --profile-size if non-default layout" >&2
+            rm -f "$out_json"
+            cleanup_resolved
+            exit $rc
+        fi
+        cleanup_resolved
+        ;;
+    adaptix-hash-match)
+        [ -z "$2" ] && { echo "Usage: ghidra.sh adaptix-hash-match <binary|file.enc.gz>"; exit 1; }
+        ensure_running
+        ahm_bname=$(basename "${2%.enc.gz}")
+        decomp_path="/analysis/output/${ahm_bname}_decompiled.c"
+        if ! dexec "$CONTAINER" test -f "$decomp_path" 2>/dev/null; then
+            echo "Error: $decomp_path not found inside container." >&2
+            echo "  Run \`ghidra.sh analyze $2\` (or \`decompile $2\`) first." >&2
+            exit 1
+        fi
+        echo "=== AdaptixC2 API Hash Match: $ahm_bname ===" >&2
+        docker cp "$SCRIPT_DIR_WIN/scripts/adaptix_hash_match.py" "$CONTAINER:/tmp/adaptix_hash_match.py"
+        docker cp "$SCRIPT_DIR_WIN/scripts/adaptix_apidefines.h" "$CONTAINER:/tmp/adaptix_apidefines.h"
+        mkdir -p "$SCRIPT_DIR_WIN/output"
+        out_csv="$SCRIPT_DIR_WIN/output/${ahm_bname}_api_hashes.csv"
+        if dexec "$CONTAINER" python3 /tmp/adaptix_hash_match.py "$decomp_path" /tmp/adaptix_apidefines.h > "$out_csv"; then
+            echo "[*] Saved: $out_csv" >&2
+            head -1 "$out_csv"
+            tail -n +2 "$out_csv" | wc -l | awk '{print "[*] " $1 " hashes resolved"}' >&2
+        else
+            rc=$?
+            echo "[!] adaptix_hash_match.py failed (rc=$rc)" >&2
+            rm -f "$out_csv"
+            exit $rc
         fi
         ;;
 

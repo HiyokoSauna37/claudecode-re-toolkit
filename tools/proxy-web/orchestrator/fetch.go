@@ -36,11 +36,24 @@ func FetchRaw(targetURL string, outputDir string, outputFile string, userAgent s
 		return nil, fmt.Errorf("invalid URL: %w", err)
 	}
 
-	// Determine output directory
+	// Determine output directory.
+	// Resolution order (avoid cwd-relative path that nests when invoked from a sub-directory):
+	//   1. explicit outputDir argument
+	//   2. PROXY_WEB_QUARANTINE env var (absolute base dir)
+	//   3. <dir-of-proxy-web.exe>/Quarantine
+	//   4. fallback: cwd-relative tools/proxy-web/Quarantine (legacy, only if exe path unavailable)
 	if outputDir == "" {
 		domain := parsed.Hostname()
 		ts := time.Now().Format("20060102_150405")
-		outputDir = filepath.Join("tools", "proxy-web", "Quarantine", domain, ts+"_fetch")
+		base := os.Getenv("PROXY_WEB_QUARANTINE")
+		if base == "" {
+			if exe, err := os.Executable(); err == nil {
+				base = filepath.Join(filepath.Dir(exe), "Quarantine")
+			} else {
+				base = filepath.Join("tools", "proxy-web", "Quarantine")
+			}
+		}
+		outputDir = filepath.Join(base, domain, ts+"_fetch")
 	}
 	if err := os.MkdirAll(outputDir, 0o755); err != nil {
 		return nil, fmt.Errorf("mkdir: %w", err)

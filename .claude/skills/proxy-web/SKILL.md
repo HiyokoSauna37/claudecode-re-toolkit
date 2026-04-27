@@ -195,6 +195,15 @@ ClickFix検出時: `clipboard_captured.json` / `decoded_payloads.json` / `inline
 
 **生のEXE/DLL/ZIPはホストに出現しない。**
 
+### 出力先の解決ロジック（cwd 非依存）
+`Quarantine/` の親ディレクトリは次の優先順で決まる。**サブディレクトリから `proxy-web.exe` を実行しても二重ネストしない**（過去のバグ修正、2026-04-27）:
+
+1. `--out` (analyze) / `-d` (fetch) で明示指定したパス
+2. 環境変数 `PROXY_WEB_QUARANTINE`（絶対パスのベースディレクトリを上書き）
+3. `proxy-web.exe` が置かれているディレクトリ直下の `Quarantine/`（デフォルト）
+
+**注意**: 以前は cwd 相対の `tools/proxy-web/Quarantine/...` を書き込んでいたため、`cd Tools/proxy-web && ./proxy-web.exe fetch ...` のように呼ぶと `tools/proxy-web/tools/proxy-web/Quarantine/...` という二重ネスト構造ができ、後段の Ghidra コマンドが「ファイルが見つからない」エラーになる事例があった。現在は exe のディレクトリ基準の絶対パスで保存される。
+
 ## 後続解析
 
 DLファイル検出時 → ユーザに「Ghidra Headlessで静的解析しますか？」と確認:

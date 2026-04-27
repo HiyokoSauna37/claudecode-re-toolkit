@@ -524,10 +524,14 @@ func handleAnalyze(args []string) {
 	}, domain)
 
 	// Output directory
-	exe, _ := os.Executable()
-	scriptDir := filepath.Dir(exe)
+	// Resolution order: PROXY_WEB_QUARANTINE env > <dir-of-proxy-web.exe>/Quarantine
 	timestamp := time.Now().Format("20060102_150405")
-	quarantineDir := filepath.Join(scriptDir, "Quarantine", domain, timestamp)
+	quarantineBase := os.Getenv("PROXY_WEB_QUARANTINE")
+	if quarantineBase == "" {
+		exe, _ := os.Executable()
+		quarantineBase = filepath.Join(filepath.Dir(exe), "Quarantine")
+	}
+	quarantineDir := filepath.Join(quarantineBase, domain, timestamp)
 	if err := os.MkdirAll(quarantineDir, 0o755); err != nil {
 		log.Fatalf("Failed to create output directory: %v", err)
 	}
