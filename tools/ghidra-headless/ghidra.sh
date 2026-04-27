@@ -496,7 +496,17 @@ case "${1:-}" in
 
     # --- FLOSS obfuscated string analysis (host-side) ---
     floss)
-        [ -z "$2" ] && { echo "Usage: ghidra.sh floss <binary|file.enc.gz>"; exit 1; }
+        if [ -z "$2" ]; then
+            echo "Usage: ghidra.sh floss <binary|file.enc.gz> [--min-len N] [--timeout SEC]"
+            echo ""
+            echo "Extracts strings that raw extraction misses:"
+            echo "  Stack strings   — built byte-by-byte on the stack"
+            echo "  Tight-loop      — XOR/ROT obfuscation loops"
+            echo "  Decoded strings — emulation-based dynamic extraction"
+            echo ""
+            echo "Requires: pip install flare-floss"
+            exit 1
+        fi
         echo "=== FLOSS Analysis: $(basename "$2") ==="
         run_host_tool "$2" floss_analyzer.py --output-dir "$SCRIPT_DIR_WIN/output"
         ;;
@@ -504,27 +514,32 @@ case "${1:-}" in
     # --- Office document analysis (oletools, in-container) ---
     office-analyze)
         if [ -z "$2" ]; then
-            echo "Usage: ghidra.sh office-analyze <file|file.enc.gz>"
-            echo "  Analyzes .doc .xls .docx .xlsm .rtf .msg for VBA macros and auto-exec triggers."
+            echo "Usage: ghidra.sh office-analyze <file|file.enc.gz> [--force]"
+            echo ""
+            echo "Analyzes Office documents for malicious content:"
+            echo "  VBA macros, auto-exec triggers (AutoOpen/Document_Open/...)"
+            echo "  Suspicious API calls (Shell, CreateObject, PowerShell, ...)"
+            echo "  OLE streams, embedded objects"
+            echo ""
+            echo "Supported: .doc .xls .ppt .docx .xlsm .docm .rtf .msg .pptm ..."
+            echo "(auto-detected by magic bytes if extension is missing)"
             exit 1
         fi
         ensure_running
         resolve_binary "$2" || exit 1
-        _off_target="$RESOLVED_BINARY"
-        _off_bname=$(basename "${2%.enc.gz}")
-        _off_bname="${_off_bname%.*}"
+        local _off_target="$RESOLVED_BINARY"
         echo "=== Office Analysis: $(basename "$2") ==="
         docker cp "$SCRIPT_DIR_WIN/office_analyzer.py" "$CONTAINER:/tmp/office_analyzer.py"
         dexec "$CONTAINER" mkdir -p /tmp/output
         if dexec "$CONTAINER" python3 /tmp/office_analyzer.py "$_off_target" \
-            --output-dir /tmp/output; then
+            --output-dir /tmp/output "${@:3}"; then
             mkdir -p "$SCRIPT_DIR_WIN/output"
-            docker cp "$CONTAINER:/tmp/output/." "$SCRIPT_DIR_WIN/output/" 2>/dev/null || true
+            docker cp "$CONTAINER:/tmp/output/" "$SCRIPT_DIR_WIN/output/" 2>/dev/null || true
             echo "=== Results in: $SCRIPT_DIR_WIN/output/ ==="
         else
-            rc=$?
+            local _off_rc=$?
             cleanup_resolved
-            exit $rc
+            exit $_off_rc
         fi
         cleanup_resolved
         ;;
@@ -532,25 +547,40 @@ case "${1:-}" in
     # --- Binary visualization (entropy profile, bigram, histogram) ---
     viz)
         if [ -z "$2" ]; then
-            echo "Usage: ghidra.sh viz <binary|file.enc.gz> [--no-plot]"
-            echo "  Generates entropy profile, bigram heatmap, byte histogram."
-            echo "  Outputs: <name>_viz.json and <name>_viz.png (if matplotlib available)"
+            echo "Usage: ghidra.sh viz <binary|file.enc.gz> [--no-plot] [--max-mb N]"
+            echo ""
+            echo "Generates 3-panel visualization for packer triage:"
+            echo "  Entropy profile  — packed sections stay near 8.0 bits/byte"
+            echo "  Byte histogram   — flat distribution = encrypted/packed"
+            echo "  Bigram heatmap   — uniform = packed/compressed (log scale)"
+            echo ""
+            echo "Entropy verdict:"
+            echo "  PACKED_OR_ENCRYPTED  avg > 7.2 or > 60% windows above 7.0"
+            echo "  COMPRESSED_OR_MIXED  avg 6.0–7.2"
+            echo "  LIKELY_CLEAN         avg < 6.0"
+            echo ""
+            echo "  --no-plot    JSON only (faster, no matplotlib needed)"
+            echo "  --max-mb N   Read limit in MB (default: 200)"
             exit 1
         fi
         ensure_running
         resolve_binary "$2" || exit 1
-        _viz_target="$RESOLVED_BINARY"
-        _viz_bname=$(basename "${2%.enc.gz}")
-        _viz_bname="${_viz_bname%.*}"
-        _viz_noplot=""
-        [ "${3:-}" = "--no-plot" ] && _viz_noplot="--no-plot"
+        local _viz_target="$RESOLVED_BINARY"
+        # Collect extra flags (--no-plot, --max-mb N) and pass through
+        local _viz_flags=""
+        local _i=3
+        while [ "$_i" -le "$#" ]; do
+            eval "_viz_flags=\"$_viz_flags \${$_i}\""
+            _i=$(( _i + 1 ))
+        done
         echo "=== Binary Visualization: $(basename "$2") ==="
         docker cp "$SCRIPT_DIR_WIN/binary_viz.py" "$CONTAINER:/tmp/binary_viz.py"
         dexec "$CONTAINER" mkdir -p /tmp/output
+        # shellcheck disable=SC2086
         dexec "$CONTAINER" python3 /tmp/binary_viz.py "$_viz_target" \
-            --output-dir /tmp/output $_viz_noplot
+            --output-dir /tmp/output $_viz_flags
         mkdir -p "$SCRIPT_DIR_WIN/output"
-        docker cp "$CONTAINER:/tmp/output/." "$SCRIPT_DIR_WIN/output/" 2>/dev/null || true
+        docker cp "$CONTAINER:/tmp/output/" "$SCRIPT_DIR_WIN/output/" 2>/dev/null || true
         echo "=== Results in: $SCRIPT_DIR_WIN/output/ ==="
         cleanup_resolved
         ;;
