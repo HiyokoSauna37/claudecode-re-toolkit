@@ -573,6 +573,17 @@ case "${1:-}" in
         else
             echo "=== Pipeline Complete. Results in: $SCRIPT_DIR_WIN/output/ ==="
         fi
+
+        # Next-step guidance (skill chain is not auto-invokable from shell)
+        echo ""
+        echo "=== Next step (manual) ==="
+        echo "Generate narrative report: invoke 'watchtowr-report' skill in Claude Code with these artifacts:"
+        for _f in "${BINARY_NAME}_triage.json" "${BINARY_NAME}_yara.json" "${BINARY_NAME}_capa.json" "${BINARY_NAME}_iocs.json" "${BINARY_NAME}_classification.json"; do
+            if [ -f "$SCRIPT_DIR_WIN/output/$_f" ]; then
+                echo "  - $SCRIPT_DIR_WIN/output/$_f"
+            fi
+        done
+        echo "After report: review with reviewer-style skill (e.g. ask Claude to spot blind spots)."
         ;;
 
     # --- AdaptixC2 beacon analysis ---

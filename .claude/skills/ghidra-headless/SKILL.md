@@ -111,7 +111,7 @@ Phase 5: Malware Classification（ホスト、IOC + 文字列から分類）
 
 **実装はシーケンシャル**（Phase 1→2→3→4→5）。各 Phase は "non-critical, continuing" で続行するため一部失敗しても他は完走する。Ghidra Analysis は Phase 3 のため YARA/CAPA より遅れて完了する → ユーザー報告は段階的に。
 
-**watchtowr-report / reviewer は analyze-full のパイプライン外**。analyze-full 完了後、ユーザー側で `watchtowr-report` スキルを別途呼び出してレポート化、必要なら reviewer 系で見落とし検出する。
+**watchtowr-report / reviewer は analyze-full のパイプライン外**（shell から skill を自動呼び出しできないため）。ただし `analyze-full` 完了時に「Next step (manual)」セクションを表示し、`watchtowr-report` への入力アーティファクト (`<binary>_triage/yara/capa/iocs/classification.json`) のフルパスを列挙するため、そのまま skill 呼び出しに渡せる。reviewer 系は report 生成後に別途依頼。
 
 **Phase 0 は analyze-full が内包する** — `analyze-full` を打つなら事前の `pe-triage` 単独実行は不要。
 
@@ -140,10 +140,19 @@ Ghidra でデコンパイルする前に .NET バイナリかチェック。3つ
 
 .NET 確定 → `ghidra.sh decompile` はスキップし `ghidra.sh dotnet-decompile <binary>` を使う（Ghidra のデコンパイラは CLR を認識できない）。
 
-**前提: `tools/dotnet-decompiler/dotnet-decompile.exe` が必須**（Go バイナリ、ホスト実行）。docker-compose ベースではない。
-- 不在時のエラー: `Error: dotnet-decompile.exe not found. Build with: cd tools/dotnet-decompiler && go build -o dotnet-decompile.exe .`
-- 初回ビルド: `cd tools/dotnet-decompiler && go build -trimpath -ldflags="-s -w" -o dotnet-decompile.exe .`
-- このリポジトリには `tools/dotnet-decompiler/` が同梱されていない場合がある → ソースの所在は別途確認、不在のまま `dotnet-decompile` を呼ぶと即終了する。
+**構成**: `tools/dotnet-decompiler/dotnet-decompile.exe`（Go ラッパー）が docker compose 経由で `dotnet-decompiler` コンテナを起動し、コンテナ内で ILSpy CLI (`ilspycmd` 8.2) を実行する。`.enc.gz` はコンテナ内で `decrypt_quarantine.py` により復号 → ILSpy 解析 → output volume (`./output`) でホストに回収。
+
+初回セットアップ（両方必須）:
+```bash
+# 1. Go ラッパーをビルド (CLAUDE.md ルール: -trimpath 必須)
+cd tools/dotnet-decompiler && go build -trimpath -ldflags="-s -w" -o dotnet-decompile.exe .
+
+# 2. Docker イメージをビルド (.NET SDK 8 + .NET 6 runtime + ilspycmd 8.2 + Python3)
+docker compose -f tools/dotnet-decompiler/docker-compose.yml up -d --build
+```
+
+稼働確認（2回目以降）: `docker compose -f tools/dotnet-decompiler/docker-compose.yml ps`（停止中の場合 `dotnet-decompile.exe` が自動で `ensureRunning` する）
+不在時のエラー: `Error: dotnet-decompile.exe not found. Build with: cd tools/dotnet-decompiler && go build -o dotnet-decompile.exe .`
 
 **.NET でも `pe-triage` / `yara-scan` / `capa` は有効**: .NET バイナリは PE ヘッダを持つので、ConfuserEx / Costura / SmartAssembly 等の .NET パッカー検出は pe-triage で可能。YARA/CAPA も .NET に対応（CAPA は `dotnet` バックエンドを使う）。
 
@@ -208,8 +217,9 @@ pip install pefile yara-python                    # PE Triage + YARA
 choco install die                                 # オプション: DiEパッカー検出
 # capa: https://github.com/mandiant/capa/releases からバイナリをPATHに配置
 bash tools/ghidra-headless/ghidra.sh start        # Ghidraコンテナ初回ビルド
-# .NET 解析を使うなら（Go バイナリ、ソースが同梱されていない場合は要取得）:
+# .NET 解析を使うなら（Go ラッパー + Docker イメージ両方）:
 cd tools/dotnet-decompiler && go build -trimpath -ldflags="-s -w" -o dotnet-decompile.exe .
+docker compose -f tools/dotnet-decompiler/docker-compose.yml up -d --build
 ```
 
 ## Knowledge Base

@@ -1,0 +1,9 @@
+services:
+  dotnet-decompiler:
+    build: .
+    container_name: dotnet-decompiler
+    volumes:
+      - ./output:/analysis/output
+    tty: true
+    stdin_open: true
+    restart: unless-stopped
