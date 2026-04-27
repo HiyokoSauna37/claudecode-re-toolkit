@@ -65,6 +65,6 @@ reports/YYYYMMDD_<target_name>.md
 
 - **保存先: `reports/` ディレクトリ直下**（サブディレクトリは作らない）
 - notes/ や notes/01_literature/malware/ には保存しない（過去に誤出力あり）
-- proxy-web経由の場合、DL元URL・ランディングページ・VT結果など取得時の情報を必ずレポートに含める
+- malware-fetch経由の場合、DL元URL・ランディングページ・VT結果など取得時の情報を必ずレポートに含める
 - `tools/ghidra-headless/output/` には生の解析出力（テキスト/デコンパイル結果）を保存
 - `reports/` にはそれをまとめた人間向けレポートを保存

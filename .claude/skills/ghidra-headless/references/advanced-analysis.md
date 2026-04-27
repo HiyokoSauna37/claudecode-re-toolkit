@@ -31,7 +31,7 @@ Kaliコンテナにradare2がインストール済み。Ghidraとの使い分け
 ### 提案フロー
 1. Ghidra静的解析完了
 2. 上記条件に該当 → 「静的解析ではペイロード/C2の特定が不可能です。VMware Sandboxで動的解析を実行しますか？」とユーザーに提案
-3. ユーザー同意 → vmware-sandbox スキルで動的解析を実行
+3. ユーザー同意 → malware-sandbox スキルで動的解析を実行
 4. 動的解析結果（メモリダンプ/展開後バイナリ） → Ghidra再解析
 
 ### 動的解析で取得すべき情報
@@ -42,7 +42,7 @@ Kaliコンテナにradare2がインストール済み。Ghidraとの使い分け
 
 ## ポスト解析: IOC活用ガイド
 
-Ghidra解析で抽出したIOCを次のアクションに繋げる。OSINT自体はforensic-analysis/vmware-sandboxが担当するが、**何を抽出し、どう使うか**は静的解析スキルの範囲内。
+Ghidra解析で抽出したIOCを次のアクションに繋げる。OSINT自体はforensic-analysis/malware-sandboxが担当するが、**何を抽出し、どう使うか**は静的解析スキルの範囲内。
 
 | 抽出したIOC | 次のアクション | 補足 |
 |---|---|---|

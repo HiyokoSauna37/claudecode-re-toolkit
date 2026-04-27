@@ -6,13 +6,13 @@
 
 # Exclude .exe by default, but allow pre-built tool binaries
 *.exe
-!tools/proxy-web/proxy-web.exe
-!tools/vmware-sandbox/vmrun-wrapper/vmrun-wrapper.exe
-!tools/vmware-sandbox/memdump-racer/memdump-racer.exe
-!tools/vmware-sandbox/tiny-unpack/tiny-unpack.exe
-!tools/vmware-sandbox/decrypt-tool/decrypt-tool.exe
-!tools/vmware-sandbox/sandbox-evasion-check/sandbox-evasion-check.exe
-!tools/vmware-sandbox/vm-detect-checker/vm-detect-checker.exe
+!tools/malware-fetch/malware-fetch.exe
+!tools/malware-sandbox/vmrun-wrapper/vmrun-wrapper.exe
+!tools/malware-sandbox/memdump-racer/memdump-racer.exe
+!tools/malware-sandbox/tiny-unpack/tiny-unpack.exe
+!tools/malware-sandbox/decrypt-tool/decrypt-tool.exe
+!tools/malware-sandbox/sandbox-evasion-check/sandbox-evasion-check.exe
+!tools/malware-sandbox/vm-detect-checker/vm-detect-checker.exe
 
 # Test binary
 *.test
@@ -42,21 +42,21 @@ venv/
 .venv/
 
 # Quarantine (encrypted malware files)
-tools/proxy-web/Quarantine/
+tools/malware-fetch/Quarantine/
 
 # Analysis output (generated files)
 tools/ghidra-headless/output/*
 !tools/ghidra-headless/output/.gitkeep
-tools/vmware-sandbox/output/*
-!tools/vmware-sandbox/output/.gitkeep
+tools/malware-sandbox/output/*
+!tools/malware-sandbox/output/.gitkeep
 
 # Logs
-tools/proxy-web/logs/*
-!tools/proxy-web/logs/.gitkeep
+tools/malware-fetch/logs/*
+!tools/malware-fetch/logs/.gitkeep
 tools/ghidra-headless/logs/*
 !tools/ghidra-headless/logs/.gitkeep
-tools/vmware-sandbox/logs/*
-!tools/vmware-sandbox/logs/.gitkeep
+tools/malware-sandbox/logs/*
+!tools/malware-sandbox/logs/.gitkeep
 
 # GUI prototype test/runtime artifacts (may leak host paths)
 tools/gui-prototype/test_out.txt
@@ -68,8 +68,8 @@ tools/gui-prototype/uploads/
 # Input binaries (don't commit malware samples)
 tools/ghidra-headless/input/*
 !tools/ghidra-headless/input/.gitkeep
-tools/vmware-sandbox/input/*
-!tools/vmware-sandbox/input/.gitkeep
+tools/malware-sandbox/input/*
+!tools/malware-sandbox/input/.gitkeep
 
 # YARA rules (downloaded, not committed)
 tools/ghidra-headless/yara-rules/*
@@ -83,3 +83,6 @@ Thumbs.db
 # sync-skills assumes a one-way sync from ~/.claude/skills, which we don't
 # use here — so don't track it (would just churn on every `cp` from life).
 .claude/skills/sync-skills/
+
+# Local Claude Code settings (per-project state, not for sharing)
+.claude/settings.local.json

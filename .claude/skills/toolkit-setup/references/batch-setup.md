@@ -24,7 +24,7 @@ Phase 0 の診断結果をもとに、実行する全アクションを一覧表
 
   実行予定アクション:
   [1] .env 作成 — QUARANTINE_PASSWORD自動生成、APIキー入力
-  [2] Docker: proxy-web イメージビルド（初回 3-5分）
+  [2] Docker: malware-fetch イメージビルド（初回 3-5分）
   [3] Docker: ghidra-headless コンテナ起動（初回 5-10分）
   [4] YARA/CAPA セットアップ
   [5] VMware Sandbox 環境確認
@@ -78,7 +78,7 @@ VIRUSTOTAL_API_KEY=********
 
 ## Step 3: Docker 環境構築（並列実行）
 
-proxy-web と ghidra-headless は独立しているため並列実行可能。
+malware-fetch と ghidra-headless は独立しているため並列実行可能。
 
 ### 3-1. 実行前確認
 
@@ -90,7 +90,7 @@ docker info > /dev/null 2>&1
 既存イメージ/コンテナがある場合、AskUserQuestion:
 ```
 既存の環境が検出されました:
-- proxy-web-browser:latest: 作成日 YYYY-MM-DD
+- malware-fetch-browser:latest: 作成日 YYYY-MM-DD
 - ghidra-headless: 状態 running
 ```
 選択肢: 「スキップ」「再ビルド（キャッシュ使用）」「再ビルド（キャッシュなし）」
@@ -99,9 +99,9 @@ docker info > /dev/null 2>&1
 
 承認後、Bash ツールを2つ並列で実行（両方 `run_in_background: true`）:
 
-**タスク A: proxy-web ビルド**
+**タスク A: malware-fetch ビルド**
 ```bash
-docker build -t proxy-web-browser:latest tools/proxy-web/ && docker run --rm proxy-web-browser:latest echo "OK"
+docker build -t malware-fetch-browser:latest tools/malware-fetch/ && docker run --rm malware-fetch-browser:latest echo "OK"
 ```
 
 **タスク B: ghidra-headless 起動**
@@ -113,7 +113,7 @@ docker compose -f tools/ghidra-headless/docker-compose.yml up -d && sleep 5 && d
 両タスク完了後にまとめて報告:
 ```
 Docker 環境構築結果:
-[OK] proxy-web-browser:latest ビルド完了
+[OK] malware-fetch-browser:latest ビルド完了
 [OK] ghidra-headless コンテナ起動完了
 ```
 失敗時は `docker logs` でエラー内容を確認して報告。
@@ -168,15 +168,15 @@ ls "$VM_VMX_PATH"
 
 ### 5-3. ゲスト確認（VM 起動が必要）
 ```bash
-bash tools/vmware-sandbox/sandbox.sh start
-bash tools/vmware-sandbox/sandbox.sh guest-tools
-bash tools/vmware-sandbox/sandbox.sh net-status
+bash tools/malware-sandbox/sandbox.sh start
+bash tools/malware-sandbox/sandbox.sh guest-tools
+bash tools/malware-sandbox/sandbox.sh net-status
 ```
 
 ### 5-4. 不足ツールの自動インストール
 不足検出時 → AskUserQuestion で確認後:
 ```bash
-bash tools/vmware-sandbox/sandbox.sh setup-guest
+bash tools/malware-sandbox/sandbox.sh setup-guest
 ```
 
 ---
@@ -188,7 +188,7 @@ bash tools/vmware-sandbox/sandbox.sh setup-guest
 ```bash
 # 並列で全チェック
 docker info > /dev/null 2>&1
-docker images proxy-web-browser:latest --format "{{.ID}}"
+docker images malware-fetch-browser:latest --format "{{.ID}}"
 docker inspect -f '{{.State.Status}}' ghidra-headless
 python -c "import yara"
 capa --version
@@ -202,7 +202,7 @@ capa --version
 ============================================
 [OK] .env               設定済み
 [OK] Docker Desktop      起動中
-[OK] proxy-web-browser   ビルド済み (abc123def)
+[OK] malware-fetch-browser   ビルド済み (abc123def)
 [OK] ghidra-headless     コンテナ実行中 (Up 2 minutes)
 [OK] YARA rules          ダウンロード済み
 [OK] yara-python         v4.x.x
@@ -210,9 +210,9 @@ capa --version
 [OK] VMware Sandbox      接続確認済み (snapshot: clean_with_tools)
 
 次のステップ:
-- proxy-web: proxy-web.exe "http://example.com"
+- malware-fetch: malware-fetch.exe "http://example.com"
 - ghidra-headless: bash tools/ghidra-headless/ghidra.sh analyze <binary>
-- vmware-sandbox: bash tools/vmware-sandbox/sandbox.sh analyze <binary>
+- malware-sandbox: bash tools/malware-sandbox/sandbox.sh analyze <binary>
 
 問題がある場合は /toolkit-setup で再実行できます。
 ============================================

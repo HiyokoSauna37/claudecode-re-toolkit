@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""pe-encrypt: Encrypt a file to quarantine .enc.gz format (proxy-web compatible).
+"""pe-encrypt: Encrypt a file to quarantine .enc.gz format (malware-fetch compatible).
 
 Why this exists: The project rule is "never decrypt malware on the host OS".
 This tool encrypts any file (typically malware extracted inside a container)
 to AES-256-CBC + gzip format, so it can be safely transferred via host
-filesystem to vmware-sandbox VMs for dynamic analysis. The output format
+filesystem to malware-sandbox VMs for dynamic analysis. The output format
 matches decrypt_quarantine.py / vm_quarantine_decrypt.ps1.
 
 Format: gzip(IV[16B] || AES-256-CBC(PKCS7(data))), key = SHA256(password).

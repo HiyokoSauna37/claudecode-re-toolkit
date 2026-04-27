@@ -8,9 +8,9 @@
 
 | スキル | 概要 | バックエンド |
 |--------|------|-------------|
-| **proxy-web** | 悪性Webサイトへの安全なアクセス、C2プロファイリング、ClickFix検出、OTX/VT/MB/TF脅威インテリジェンス | Docker (Chromium + Playwright) |
+| **malware-fetch** | 悪性Webサイトへの安全なアクセス、C2プロファイリング、ClickFix検出、OTX/VT/MB/TF脅威インテリジェンス | Docker (Chromium + Playwright) |
 | **ghidra-headless** | Ghidra による自動静的解析（デコンパイル、インポート、文字列、YARA、CAPA、.NETデコンパイル）、analyzer+reviewerエージェントチーム | Docker (Ghidra 12.0.3 + Kali/radare2) |
-| **vmware-sandbox** | VMware VM を使ったマルウェア動的解析（アンパック、Frida DBI、FakeNet、DispatchLogger COM監視） | VMware Workstation |
+| **malware-sandbox** | VMware VM を使ったマルウェア動的解析（アンパック、Frida DBI、FakeNet、DispatchLogger COM監視） | VMware Workstation |
 | **toolkit-setup** | .env作成、Dockerビルド、YARA/CAPA、VMware設定の対話型セットアップウィザード | — |
 
 ## アーキテクチャ
@@ -20,7 +20,7 @@
 │                  Claude Code                     │
 │              (AI駆動オーケストレーション)           │
 ├───────────────┬───────────────┬─────────────────┤
-│  proxy-web    │ ghidra-headless│ vmware-sandbox  │
+│  malware-fetch    │ ghidra-headless│ malware-sandbox  │
 │  (Docker)     │  (Docker)     │  (VMware VM)    │
 ├───────────────┼───────────────┼─────────────────┤
 │ • スクリーンショット│ • デコンパイル │ • アンパック    │
@@ -41,7 +41,7 @@
 - **Windows 10/11**（Linux/macOS は未サポート）
 - [Claude Code](https://claude.com/claude-code) インストール済み
 - Docker Desktop 起動済み
-- [VMware Workstation Pro](https://www.vmware.com/products/desktop-hypervisor/workstation-and-fusion)（vmware-sandbox スキルに必要、vmrun CLI 利用）
+- [VMware Workstation Pro](https://www.vmware.com/products/desktop-hypervisor/workstation-and-fusion)（malware-sandbox スキルに必要、vmrun CLI 利用）
 - Python 3.10+
 
 ### セットアップ
@@ -69,14 +69,14 @@ cp .env.example .env
 # .env を編集して各パラメータを設定（下記テーブル参照）
 
 # Docker イメージのビルド
-docker build -t proxy-web-browser:latest tools/proxy-web/
+docker build -t malware-fetch-browser:latest tools/malware-fetch/
 docker compose -f tools/ghidra-headless/docker-compose.yml up -d
 
 # VMware sandbox のセットアップ（ドキュメント参照）
-# tools/vmware-sandbox/docs/VM-SETUP.md
+# tools/malware-sandbox/docs/VM-SETUP.md
 ```
 
-ビルド済み Windows バイナリ（proxy-web.exe、vmrun-wrapper.exe 等）はリポジトリに同梱済み。Go のインストールは不要。
+ビルド済み Windows バイナリ（malware-fetch.exe、vmrun-wrapper.exe 等）はリポジトリに同梱済み。Go のインストールは不要。
 
 ### 環境変数 (.env)
 
@@ -84,18 +84,18 @@ docker compose -f tools/ghidra-headless/docker-compose.yml up -d
 
 | 変数名 | 説明 | 必要なスキル |
 |--------|------|-------------|
-| `QUARANTINE_PASSWORD` | ダウンロードしたマルウェアの AES-256-CBC 暗号化パスワード。任意の強力なパスワードを設定。 | proxy-web |
-| `VIRUSTOTAL_API_KEY` | VirusTotal API キー（[無料枠](https://www.virustotal.com/gui/join-us)あり）。ハッシュ検索・振る舞い分析に使用。 | proxy-web (`check` / `behavior` / `lookup`) |
-| `ABUSECH_AUTH_KEY` | [abuse.ch](https://auth.abuse.ch/) API キー（MalwareBazaar / ThreatFox 検索用）。なくても動作するがレート制限あり。 | proxy-web (`bazaar` / `threatfox`、任意) |
-| `VMRUN_PATH` | `vmrun.exe` のフルパス。例: `C:\Program Files (x86)\VMware\VMware Workstation\vmrun.exe` | vmware-sandbox |
-| `VM_VMX_PATH` | VM の `.vmx` ファイルのフルパス。例: `C:\VMs\Win10\Win10.vmx` | vmware-sandbox |
-| `VM_GUEST_USER` | ゲスト OS のログインユーザー名 | vmware-sandbox |
-| `VM_GUEST_PASS` | ゲスト OS のログインパスワード | vmware-sandbox |
-| `VM_GUEST_PROFILE` | ゲスト OS のユーザープロファイルディレクトリ。例: `C:\Users\analyst` | vmware-sandbox |
-| `VM_SNAPSHOT` | 解析後に復帰するクリーンスナップショット名（デフォルト: `clean_with_tools`） | vmware-sandbox（任意） |
-| `VMRUN_TIMEOUT` | vmrun コマンドのタイムアウト秒数（デフォルト: `30`） | vmware-sandbox（任意） |
+| `QUARANTINE_PASSWORD` | ダウンロードしたマルウェアの AES-256-CBC 暗号化パスワード。任意の強力なパスワードを設定。 | malware-fetch |
+| `VIRUSTOTAL_API_KEY` | VirusTotal API キー（[無料枠](https://www.virustotal.com/gui/join-us)あり）。ハッシュ検索・振る舞い分析に使用。 | malware-fetch (`check` / `behavior` / `lookup`) |
+| `ABUSECH_AUTH_KEY` | [abuse.ch](https://auth.abuse.ch/) API キー（MalwareBazaar / ThreatFox 検索用）。なくても動作するがレート制限あり。 | malware-fetch (`bazaar` / `threatfox`、任意) |
+| `VMRUN_PATH` | `vmrun.exe` のフルパス。例: `C:\Program Files (x86)\VMware\VMware Workstation\vmrun.exe` | malware-sandbox |
+| `VM_VMX_PATH` | VM の `.vmx` ファイルのフルパス。例: `C:\VMs\Win10\Win10.vmx` | malware-sandbox |
+| `VM_GUEST_USER` | ゲスト OS のログインユーザー名 | malware-sandbox |
+| `VM_GUEST_PASS` | ゲスト OS のログインパスワード | malware-sandbox |
+| `VM_GUEST_PROFILE` | ゲスト OS のユーザープロファイルディレクトリ。例: `C:\Users\analyst` | malware-sandbox |
+| `VM_SNAPSHOT` | 解析後に復帰するクリーンスナップショット名（デフォルト: `clean_with_tools`） | malware-sandbox（任意） |
+| `VMRUN_TIMEOUT` | vmrun コマンドのタイムアウト秒数（デフォルト: `30`） | malware-sandbox（任意） |
 
-> **補足:** proxy-web と ghidra-headless は `QUARANTINE_PASSWORD` と API キー（任意）のみで利用可能。`VM_*` 変数は vmware-sandbox を使う場合のみ必要。
+> **補足:** malware-fetch と ghidra-headless は `QUARANTINE_PASSWORD` と API キー（任意）のみで利用可能。`VM_*` 変数は malware-sandbox を使う場合のみ必要。
 
 ### Claude Code での使い方
 
@@ -104,9 +104,9 @@ docker compose -f tools/ghidra-headless/docker-compose.yml up -d
 claude
 
 # スキルの利用例:
-# 「このURLをマルウェア解析して」 → proxy-web
+# 「このURLをマルウェア解析して」 → malware-fetch
 # 「このバイナリをGhidraで解析して」 → ghidra-headless
-# 「このパック済みバイナリを動的解析して」 → vmware-sandbox
+# 「このパック済みバイナリを動的解析して」 → malware-sandbox
 ```
 
 ## GUI ダッシュボード（実験的）
@@ -137,9 +137,9 @@ python server.py
 
 ## 典型的なワークフロー
 
-1. **Web収集**: proxy-web で悪性URLに安全にアクセスし、アーティファクトを取得
+1. **Web収集**: malware-fetch で悪性URLに安全にアクセスし、アーティファクトを取得
 2. **静的解析**: ghidra-headless でダウンロードしたバイナリを解析（YARA、CAPA、デコンパイル）
-3. **動的解析**: パック/難読化された検体は vmware-sandbox でランタイム解析
+3. **動的解析**: パック/難読化された検体は malware-sandbox でランタイム解析
 4. **再解析**: アンパック後のバイナリを ghidra-headless で再度デコンパイル
 
 ## セキュリティ
@@ -151,7 +151,7 @@ python server.py
 
 ## ツール詳細
 
-### proxy-web
+### malware-fetch
 
 Go 製 CLI ツールによる安全な Web フォレンジック:
 - Docker 隔離された Chromium ブラウザ
@@ -159,7 +159,7 @@ Go 製 CLI ツールによる安全な Web フォレンジック:
 - VirusTotal、MalwareBazaar、ThreatFox、OTX 連携
 - C2 自動プロファイリング（VT + ThreatFox + OTX + Passive DNS + ポートスキャン）
 - `c2cluster.py` によるクラスタ全体プロファイリング（ThreatFox タグ横展開、fingerprint ハンティング）
-- 脅威インテリジェンスツール群（`tools/proxy-web/intel/`） — `c2hunt`、`threatfeed`、`iocminer`、`loghunter`、`intel`（統合ディスパッチャ）、`hunt-report.exe`（Go 製集約ツール）
+- 脅威インテリジェンスツール群（`tools/malware-fetch/intel/`） — `c2hunt`、`threatfeed`、`iocminer`、`loghunter`、`intel`（統合ディスパッチャ）、`hunt-report.exe`（Go 製集約ツール）
 - ClickFix 検出と JS 難読化解析（`js_deobfuscate.py --url` はディスク書込なし）
 - ClearFake (Polygon ブロックチェーン型 C2) 専用デコーダ（`clearfake_decode.py`）
 - ネットワークログ自動分類（BLOCKCHAIN_RPC、C2_API、TRACKER 等）
@@ -183,7 +183,7 @@ Docker ベースの Ghidra 自動解析:
 - ヘルパースクリプト: `lnk-parser.py`（LNK トリアージ）、`pe-encrypt.py`（VM 転送用 `.enc.gz` 生成）、`chunk-extract.py`（`.rdata` 内の埋込バイナリ抽出）
 - コマンドログ自動記録 — `ghidra.sh` 実行のたびに `tools/ghidra-headless/logs/YYYYMMDD_<target>.md` に自動追記。確認は `ghidra.sh log-show <binary>`
 
-### vmware-sandbox
+### malware-sandbox
 
 VMware Workstation VM 自動操作:
 - ワンコマンド `analyze` ワークフロー — スナップショット復帰、Host-Only ネットワーク隔離、マルウェア転送、pre/post 状態取得、HollowsHunter 実行、最終復帰までを自動実行（手動 `start` / `net-isolate` 不要）

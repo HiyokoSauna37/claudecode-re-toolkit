@@ -254,7 +254,7 @@ RATの場合、レポートに以下を必ず記載:
 1. **Ghidra初期トリアージ**: info → セクション名`UPX0`/`UPX1`検出 → UPXパック確認
 2. **コンテナ内アンパック**: `docker exec ghidra-headless upx -d /tmp/binary` → 再解析
 3. **アンパック後に.rsrcが90%+**: 埋め込みペイロード（ドロッパー）の可能性
-4. **動的解析へ切替**: vmware-sandbox でドロップされたファイルを回収
+4. **動的解析へ切替**: malware-sandbox でドロップされたファイルを回収
 5. **ドロップされたバイナリをGhidra再解析**: `bash tools/ghidra-headless/ghidra.sh analyze <dropped_binary>`
 
 ## KB-10: decompile_all.py Limitations
@@ -400,7 +400,7 @@ docker exec ghidra-headless bash -c "/opt/ghidra/support/analyzeHeadless /analys
 ### 解析手順
 1. strings出力から `pastebin.com`, `gist.github.com`, `raw.githubusercontent.com` 等のURL検索
 2. DDR URLの中身を `curl` で確認（Stage 2 URL取得）
-3. proxy-webでStage 2をダウンロード
+3. malware-fetchでStage 2をダウンロード
 4. Stage 2のGhidra解析→ファミリ特定
 
 ### CAPA検出パターン（wolfSSL静的リンク型）
@@ -416,7 +416,7 @@ docker exec ghidra-headless bash -c "/opt/ghidra/support/analyzeHeadless /analys
 ## KB-15: .enc.gz ファイルの自動処理（2026-03-11修正）
 
 ### 問題
-yara-scan/capa コマンドが .enc.gz（proxy-web隔離ファイル）を直接処理できず、手動復号が必要だった。
+yara-scan/capa コマンドが .enc.gz（malware-fetch隔離ファイル）を直接処理できず、手動復号が必要だった。
 
 ### 解決
 ghidra.sh の yara-scan/capa コマンドに .enc.gz 自動検出・復号を追加:
@@ -427,8 +427,8 @@ ghidra.sh の yara-scan/capa コマンドに .enc.gz 自動検出・復号を追
 
 ### 使い方（変更なし）
 ```bash
-bash tools/ghidra-headless/ghidra.sh yara-scan "tools/proxy-web/Quarantine/<domain>/<ts>/<file>.enc.gz"
-bash tools/ghidra-headless/ghidra.sh capa "tools/proxy-web/Quarantine/<domain>/<ts>/<file>.enc.gz"
+bash tools/ghidra-headless/ghidra.sh yara-scan "tools/malware-fetch/Quarantine/<domain>/<ts>/<file>.enc.gz"
+bash tools/ghidra-headless/ghidra.sh capa "tools/malware-fetch/Quarantine/<domain>/<ts>/<file>.enc.gz"
 ```
 
 ## KB-16: .NETバイナリ解析ガイド（2026-04-12追加）

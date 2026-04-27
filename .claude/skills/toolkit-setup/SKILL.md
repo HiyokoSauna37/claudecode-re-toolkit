@@ -3,7 +3,7 @@ name: toolkit-setup
 description: |
   マルウェア解析ツールキットの初回セットアップおよび再セットアップを実行する。前提条件チェック、.env作成、Dockerイメージビルド、YARA/CAPAインストール、VMware環境構築ガイドを含む。
   Use when: "セットアップ", "setup", "初期設定", "環境構築", "toolkit-setup", ".envを作りたい", "Dockerビルド", "再セットアップ", "VMware設定", ".env編集"
-  Do NOT use for: マルウェア解析の実行（proxy-web / ghidra-headless / vmware-sandbox を使用）、個別ツールのトラブルシューティング
+  Do NOT use for: マルウェア解析の実行（malware-fetch / ghidra-headless / malware-sandbox を使用）、個別ツールのトラブルシューティング
 instructions: |
   1. Phase 0 — 環境診断: 以下を並列実行して現状を把握
      .env存在確認, docker info, docker images/ps, vmrun list, go/python version, yara-rules/ 存在, pip show yara-python/flare-capa
@@ -33,7 +33,7 @@ metadata:
 # 並列実行（すべて独立）
 cat .env 2>/dev/null | head -1                                    # .env 存在
 docker info > /dev/null 2>&1                                      # Docker Desktop
-docker images proxy-web-browser:latest --format "{{.ID}}"         # proxy-web イメージ
+docker images malware-fetch-browser:latest --format "{{.ID}}"         # malware-fetch イメージ
 docker ps -a --filter "name=ghidra-headless" --format "{{.Status}}" # ghidra コンテナ
 ls "C:/Program Files (x86)/VMware/VMware Workstation/vmrun.exe" 2>/dev/null  # VMware
 go version 2>/dev/null                                            # Go
@@ -48,7 +48,7 @@ pip show flare-capa 2>/dev/null                                   # flare-capa
 環境診断結果:
 [OK] Docker Desktop      起動中
 [!!] .env               未作成
-[OK] proxy-web-browser   ビルド済み
+[OK] malware-fetch-browser   ビルド済み
 [!!] ghidra-headless     未作成
 ...
 ```
@@ -67,7 +67,7 @@ AskUserQuestion で以下を確認:
 Phase 0 の結果に基づき、未セットアップ項目をデフォルトで含める。
 セットアップ済み項目は「(済)」と明記し、再セットアップの選択肢として残す。
 - .env 作成/編集
-- Docker: proxy-web イメージビルド
+- Docker: malware-fetch イメージビルド
 - Docker: ghidra-headless コンテナ起動
 - YARA/CAPA セットアップ
 - VMware Sandbox 環境構築ガイド
@@ -86,7 +86,7 @@ Phase 0 の結果に基づき、未セットアップ項目をデフォルトで
 ユーザー: "セットアップして"
 → Phase 0: 環境診断（.env未作成、Docker起動中、他は未セットアップ）
 → Phase 1: モード選択 → 対話型、全項目選択
-→ Phase 2: .env作成 → proxy-webビルド → ghidra起動 → YARA/CAPA → VMware確認
+→ Phase 2: .env作成 → malware-fetchビルド → ghidra起動 → YARA/CAPA → VMware確認
 → 最終サマリー表示
 ```
 
@@ -95,7 +95,7 @@ Phase 0 の結果に基づき、未セットアップ項目をデフォルトで
 ```
 ユーザー: "Dockerイメージを再ビルドしたい"
 → Phase 0: 環境診断（.env済、Docker済、ghidra済）
-→ Phase 1: モード選択 → Docker: proxy-web のみ選択
+→ Phase 1: モード選択 → Docker: malware-fetch のみ選択
 → Phase 2: キャッシュ有無を確認 → 再ビルド → 検証
 ```
 
@@ -153,7 +153,7 @@ Phase 0 の結果に基づき、未セットアップ項目をデフォルトで
 解決:
 1. VMRUN_PATH が正しいか確認
 2. VMware Workstation を起動してから再実行
-3. 詳細は references/troubleshooting.md（vmware-sandbox スキル）を参照
+3. 詳細は references/troubleshooting.md（malware-sandbox スキル）を参照
 ```
 
 ### .env の既存値を上書きしてしまった
