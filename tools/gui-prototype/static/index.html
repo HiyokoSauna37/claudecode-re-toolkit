@@ -1,42 +1,45 @@
 <!DOCTYPE html>
-<html lang="ja">
+<html lang="ja" data-theme="forensic">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="color-scheme" content="dark light">
-  <meta name="description" content="Claude Code-powered malware analysis dashboard">
+  <meta name="description" content="Forensic Intelligence Terminal — Malware Analysis Toolkit">
   <title>Malware Analysis Toolkit</title>
   <link rel="icon" type="image/png" href="/static/virus-analysis.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <!-- Skip to content for keyboard users -->
-  <a href="#prompt-input" class="skip-link">Skip to chat input</a>
+  <a href="#prompt-input" class="skip-link">Skip to prompt</a>
 
-  <header>
+  <!-- Status rail (top, 28px) -->
+  <header role="banner">
     <div id="header-left">
-      <img src="/static/virus-analysis.png" alt="Malware Analysis Toolkit logo" id="header-logo">
+      <img src="/static/virus-analysis.png" alt="" id="header-logo" aria-hidden="true">
       <h1>Malware Analysis Toolkit</h1>
     </div>
     <div id="header-right">
-      <span id="session-stats" title="Session statistics"></span>
+      <span id="session-stats" title="Session statistics" aria-live="polite"></span>
       <div id="ws-status" class="ws-disconnected" title="WebSocket status" role="status" aria-live="polite">Disconnected</div>
-      <button id="theme-btn" onclick="cycleTheme()" title="Switch theme" aria-label="Switch color theme">&#x1F3A8;</button>
+      <button id="theme-btn" onclick="cycleTheme()" title="Cycle theme" aria-label="Switch color theme">Theme</button>
     </div>
   </header>
 
+  <!-- Main grid: sidebar | workspace | inspector -->
   <main>
-    <!-- Left sidebar (resizable) -->
+    <!-- ─── LEFT: Navigation / Context ─────────────────── -->
     <aside id="sidebar" role="complementary" aria-label="Analysis panels">
       <section id="status-panel" class="sidebar-section" role="region" aria-label="Environment status">
-        <h2 class="collapsible" onclick="toggleSection(this)" role="button" aria-expanded="true" tabindex="0">Environment <span class="collapse-arrow">&#9660;</span></h2>
+        <h2 class="collapsible" onclick="toggleSection(this)" role="button" aria-expanded="true" tabindex="0">Environment <span class="collapse-arrow">▾</span></h2>
         <div class="section-body">
           <div id="status-list"><div class="status-item loading">Loading...</div></div>
         </div>
       </section>
 
       <section id="quarantine-panel" class="sidebar-section" role="region" aria-label="Quarantine files">
-        <h2 class="collapsible" onclick="toggleSection(this)" role="button" aria-expanded="true" tabindex="0">Quarantine <span class="collapse-arrow">&#9660;</span></h2>
+        <h2 class="collapsible" onclick="toggleSection(this)" role="button" aria-expanded="true" tabindex="0">Quarantine <span class="collapse-arrow">▾</span></h2>
         <div class="section-body">
           <div id="quarantine-tree" role="tree" aria-label="Quarantine file tree"></div>
           <button onclick="fetchQuarantine()" aria-label="Refresh quarantine list">Refresh</button>
@@ -44,7 +47,7 @@
       </section>
 
       <section id="reports-panel" class="sidebar-section" role="region" aria-label="Analysis reports">
-        <h2 class="collapsible" onclick="toggleSection(this)" role="button" aria-expanded="true" tabindex="0">Reports <span class="collapse-arrow">&#9660;</span></h2>
+        <h2 class="collapsible" onclick="toggleSection(this)" role="button" aria-expanded="true" tabindex="0">Reports <span class="collapse-arrow">▾</span></h2>
         <div class="section-body">
           <div id="report-list"></div>
           <button onclick="fetchReports()" aria-label="Refresh reports list">Refresh</button>
@@ -52,7 +55,7 @@
       </section>
 
       <section id="ghidra-logs-panel" class="sidebar-section" role="region" aria-label="Ghidra logs">
-        <h2 class="collapsible is-collapsed" onclick="toggleSection(this)" role="button" aria-expanded="false" tabindex="0">Ghidra Logs <span class="collapse-arrow">&#9660;</span></h2>
+        <h2 class="collapsible is-collapsed" onclick="toggleSection(this)" role="button" aria-expanded="false" tabindex="0">Ghidra Logs <span class="collapse-arrow">▾</span></h2>
         <div class="section-body collapsed">
           <div id="ghidra-log-list"></div>
           <button onclick="fetchGhidraLogs()" aria-label="Refresh Ghidra logs">Refresh</button>
@@ -62,32 +65,32 @@
       <div class="sidebar-spacer"></div>
 
       <section id="templates-panel" class="sidebar-section" role="region" aria-label="Quick actions">
-        <h2 class="collapsible is-collapsed" onclick="toggleSection(this)" role="button" aria-expanded="false" tabindex="0">Quick Actions <span class="collapse-arrow">&#9660;</span></h2>
+        <h2 class="collapsible is-collapsed" onclick="toggleSection(this)" role="button" aria-expanded="false" tabindex="0">Quick Actions <span class="collapse-arrow">▾</span></h2>
         <div class="section-body collapsed">
           <div id="template-list">
-            <button class="tpl-btn" data-prompt="このURLを解析して: " data-focus="true" title="URLを指定して解析">URL解析</button>
+            <button class="tpl-btn" data-prompt="このURLを解析して: " data-focus="true" title="URLを指定して解析">URL</button>
             <button class="tpl-btn" data-prompt="/proxy-web " data-focus="true" title="Docker経由で安全にWebアクセス">proxy-web</button>
             <button class="tpl-btn" data-prompt="/ghidra-headless " data-focus="true" title="Ghidraで静的解析">Ghidra</button>
             <button class="tpl-btn" data-prompt="/vmware-sandbox " data-focus="true" title="VMwareで動的解析">VMware</button>
-            <button class="tpl-btn" data-prompt="VTでこのハッシュを調べて: " data-focus="true" title="VirusTotal検索">VT検索</button>
+            <button class="tpl-btn" data-prompt="VTでこのハッシュを調べて: " data-focus="true" title="VirusTotal検索">VT</button>
             <button class="tpl-btn" data-prompt="/toolkit-setup" title="環境セットアップ">Setup</button>
           </div>
         </div>
       </section>
 
       <section id="shortcuts-panel" class="sidebar-section" role="region" aria-label="Keyboard shortcuts">
-        <h2 class="collapsible is-collapsed" onclick="toggleSection(this)" role="button" aria-expanded="false" tabindex="0">Shortcuts <span class="collapse-arrow">&#9660;</span></h2>
+        <h2 class="collapsible is-collapsed" onclick="toggleSection(this)" role="button" aria-expanded="false" tabindex="0">Shortcuts <span class="collapse-arrow">▾</span></h2>
         <div class="section-body collapsed">
           <div class="shortcut-list">
-            <div><kbd>Enter</kbd> 送信</div>
-            <div><kbd>Shift+Enter</kbd> 改行</div>
-            <div><kbd>Esc</kbd> キャンセル</div>
-            <div><kbd>Ctrl+K</kbd> コマンドパレット</div>
-            <div><kbd>Ctrl+L</kbd> チャットクリア</div>
-            <div><kbd>Ctrl+N</kbd> 新セッション</div>
-            <div><kbd>Ctrl+S</kbd> エクスポート</div>
-            <div><kbd>Ctrl+F</kbd> チャット内検索</div>
-            <div><kbd>&#8593;</kbd><kbd>&#8595;</kbd> 履歴</div>
+            <div><kbd>Enter</kbd> Send</div>
+            <div><kbd>Shift+Enter</kbd> Newline</div>
+            <div><kbd>Esc</kbd> Cancel</div>
+            <div><kbd>Ctrl+K</kbd> Palette</div>
+            <div><kbd>Ctrl+L</kbd> Clear</div>
+            <div><kbd>Ctrl+N</kbd> New session</div>
+            <div><kbd>Ctrl+S</kbd> Export</div>
+            <div><kbd>Ctrl+F</kbd> Search</div>
+            <div><kbd>↑</kbd> <kbd>↓</kbd> History</div>
           </div>
         </div>
       </section>
@@ -96,38 +99,38 @@
     <!-- Sidebar resize handle -->
     <div id="sidebar-resize" class="resize-handle-v" role="separator" aria-label="Resize sidebar"></div>
 
-    <!-- Center: Chat -->
-    <section id="chat-panel">
-      <!-- Analysis Pipeline Indicator -->
-      <div id="pipeline-indicator" role="navigation" aria-label="Analysis pipeline">
+    <!-- ─── CENTER: Workspace ──────────────────────────── -->
+    <section id="chat-panel" role="main">
+      <!-- Mission Timeline (former pipeline) -->
+      <div id="pipeline-indicator" role="navigation" aria-label="Mission timeline">
         <div class="pipeline-stage" data-stage="triage" title="Triage / URL access">
-          <span class="pipeline-icon">&#x1F50E;</span>
+          <span class="pipeline-icon" aria-hidden="true"></span>
           <span class="pipeline-label">Triage</span>
         </div>
-        <div class="pipeline-arrow">&#x25B6;</div>
+        <div class="pipeline-arrow" aria-hidden="true">─</div>
         <div class="pipeline-stage" data-stage="static" title="Static analysis (Ghidra)">
-          <span class="pipeline-icon">&#x1F4C4;</span>
+          <span class="pipeline-icon" aria-hidden="true"></span>
           <span class="pipeline-label">Static</span>
         </div>
-        <div class="pipeline-arrow">&#x25B6;</div>
+        <div class="pipeline-arrow" aria-hidden="true">─</div>
         <div class="pipeline-stage" data-stage="dynamic" title="Dynamic analysis (VMware)">
-          <span class="pipeline-icon">&#x1F4BB;</span>
+          <span class="pipeline-icon" aria-hidden="true"></span>
           <span class="pipeline-label">Dynamic</span>
         </div>
-        <div class="pipeline-arrow">&#x25B6;</div>
+        <div class="pipeline-arrow" aria-hidden="true">─</div>
         <div class="pipeline-stage" data-stage="report" title="Report generation">
-          <span class="pipeline-icon">&#x1F4DD;</span>
+          <span class="pipeline-icon" aria-hidden="true"></span>
           <span class="pipeline-label">Report</span>
         </div>
       </div>
 
-      <!-- Session Tabs -->
+      <!-- Session tabs -->
       <div id="session-tabs" role="tablist" aria-label="Chat sessions">
         <div class="tab active" data-session="0" role="tab" aria-selected="true" tabindex="0">Session 1</div>
         <button id="new-session-btn" onclick="createSession()" title="New session (Ctrl+N)" aria-label="Create new session">+</button>
       </div>
 
-      <!-- Chat toolbar -->
+      <!-- Toolbar -->
       <div id="chat-toolbar" role="toolbar" aria-label="Chat controls">
         <label for="skill-select" class="sr-only">Skill selector</label>
         <select id="skill-select" aria-label="Select analysis skill">
@@ -135,133 +138,139 @@
         </select>
         <div id="skill-tooltip" class="tooltip" role="tooltip"></div>
         <div id="toolbar-spacer"></div>
-        <button id="hide-tools-btn" class="toolbar-btn active" onclick="toggleToolVisibility()" title="Show/hide tool calls" aria-label="Toggle tool call visibility">&#x1F527; Tools</button>
-        <button class="toolbar-btn" onclick="collapseAllTools()" title="Collapse all tool calls" aria-label="Collapse all tool calls">&#x25B2; Tools</button>
-        <button class="toolbar-btn" onclick="expandAllTools()" title="Expand all tool calls" aria-label="Expand all tool calls">&#x25BC; Tools</button>
-        <button id="vm-toggle-btn" class="toolbar-btn" onclick="toggleVmLiveViewVisibility()" title="Toggle VM Live View" aria-label="Toggle VM Live View">&#x1F4BB; VM</button>
-        <button id="autoscroll-btn" class="toolbar-btn active" onclick="toggleAutoScroll()" title="Auto-scroll" aria-label="Toggle auto-scroll">&#x2193; Scroll</button>
-        <button class="toolbar-btn" onclick="exportChat()" title="Export (Ctrl+S)" aria-label="Export chat">&#x2913; Export</button>
+        <button id="hide-tools-btn" class="toolbar-btn active" onclick="toggleToolVisibility()" title="Show/hide tool calls" aria-label="Toggle tool call visibility">Tools</button>
+        <button class="toolbar-btn" onclick="collapseAllTools()" title="Collapse all tool calls" aria-label="Collapse all tool calls">Collapse</button>
+        <button class="toolbar-btn" onclick="expandAllTools()" title="Expand all tool calls" aria-label="Expand all tool calls">Expand</button>
+        <button id="vm-toggle-btn" class="toolbar-btn" onclick="toggleVmLiveViewVisibility()" title="Toggle VM Live View" aria-label="Toggle VM Live View">VM</button>
+        <button id="autoscroll-btn" class="toolbar-btn active" onclick="toggleAutoScroll()" title="Auto-scroll" aria-label="Toggle auto-scroll">Scroll</button>
+        <button class="toolbar-btn" onclick="exportChat()" title="Export (Ctrl+S)" aria-label="Export chat">Export</button>
       </div>
 
-      <!-- Chat search bar -->
+      <!-- Chat search -->
       <div id="chat-search" class="hidden" role="search">
         <label for="chat-search-input" class="sr-only">Search in chat</label>
         <input type="text" id="chat-search-input" placeholder="Search in chat..." oninput="searchChat(this.value)">
         <span id="chat-search-count" aria-live="polite"></span>
-        <button onclick="closeChatSearch()" aria-label="Close search">&#x2715;</button>
+        <button onclick="closeChatSearch()" aria-label="Close search">✕</button>
       </div>
 
-      <!-- Welcome screen -->
-      <div id="welcome-screen">
-        <div class="welcome-logo">MAT</div>
-        <h2>Malware Analysis Toolkit</h2>
-        <p>Claude Codeを使ったマルウェア解析ダッシュボード</p>
+      <!-- Welcome screen (editorial) -->
+      <div id="welcome-screen" data-cls="Forensic">
+        <div>
+          <span class="welcome-logo">Malware Analysis Toolkit</span>
+          <h2>Forensic Intelligence Terminal</h2>
+        </div>
+
         <div class="welcome-actions">
           <button class="welcome-btn" onclick="insertPrompt('/proxy-web ')">
-            <span class="welcome-icon">&#x1F310;</span>
-            <span>Web解析</span>
-            <small>URLを安全にアクセス</small>
+            <span class="welcome-icon" aria-hidden="true">▸</span>
+            <span>Web Analysis</span>
+            <small>URL を Docker 隔離環境で安全に取得</small>
           </button>
           <button class="welcome-btn" onclick="insertPrompt('/ghidra-headless ')">
-            <span class="welcome-icon">&#x1F50D;</span>
-            <span>静的解析</span>
-            <small>バイナリをGhidraで解析</small>
+            <span class="welcome-icon" aria-hidden="true">▸</span>
+            <span>Static Analysis</span>
+            <small>Ghidra デコンパイル / YARA / CAPA</small>
           </button>
           <button class="welcome-btn" onclick="insertPrompt('/vmware-sandbox ')">
-            <span class="welcome-icon">&#x1F4BB;</span>
-            <span>動的解析</span>
-            <small>VMwareでマルウェア実行</small>
+            <span class="welcome-icon" aria-hidden="true">▸</span>
+            <span>Dynamic Analysis</span>
+            <small>VMware ランタイム解析 / アンパック</small>
           </button>
           <button class="welcome-btn" onclick="insertPrompt('VTでこのハッシュを調べて: ')">
-            <span class="welcome-icon">&#x1F50E;</span>
-            <span>VT検索</span>
-            <small>VirusTotalでハッシュ検索</small>
+            <span class="welcome-icon" aria-hidden="true">▸</span>
+            <span>Hash Lookup</span>
+            <small>VirusTotal / MalwareBazaar / ThreatFox</small>
           </button>
         </div>
-        <p class="welcome-hint">プロンプトを入力するか、上のボタンをクリックして開始</p>
+
+        <p class="welcome-hint">Type a command, drop a file, or press <kbd>Ctrl</kbd>+<kbd>K</kbd></p>
       </div>
 
       <div id="chat-messages" role="log" aria-live="polite" aria-label="Chat messages"></div>
 
-      <!-- Loading spinner -->
+      <!-- Inline spinner -->
       <div id="loading-spinner" class="hidden" role="status" aria-label="Processing">
         <div class="spinner"></div>
         <span id="spinner-elapsed">0s</span>
       </div>
 
-      <!-- VM Live View (floating) -->
-      <div id="vm-live-view" class="hidden" role="complementary" aria-label="VM Live View">
-        <div id="vm-live-header">
-          <span>VM Live View</span>
-          <div>
-            <button onclick="toggleVmLiveView()" title="Minimize" aria-label="Minimize VM view">&#x2015;</button>
-            <button onclick="closeVmLiveView()" aria-label="Close VM view">&#x2715;</button>
-          </div>
-        </div>
-        <div id="vm-live-body">
-          <img id="vm-live-img" src="" alt="VM Screenshot">
-          <div id="vm-live-placeholder" class="hidden">Waiting for VM screenshot...</div>
-        </div>
-      </div>
-
-      <!-- File drop zone -->
+      <!-- Drop zone overlay -->
       <div id="drop-zone" class="hidden" role="region" aria-label="File drop zone">
-        Drop file here to upload &amp; analyze
+        Target Acquired · drop to analyze
       </div>
 
       <!-- Slash command autocomplete -->
       <div id="slash-menu" class="hidden" role="listbox" aria-label="Command suggestions"></div>
 
-      <!-- Next step suggestion -->
+      <!-- Next-step suggestion -->
       <div id="next-step-bar" class="hidden" role="alert">
-        <span id="next-step-icon">&#x1F4A1;</span>
+        <span id="next-step-icon" aria-hidden="true">▸</span>
         <span id="next-step-text"></span>
         <button id="next-step-action" onclick="applyNextStep()" aria-label="Apply suggestion"></button>
-        <button onclick="hideNextStep()" aria-label="Dismiss suggestion">&#x2715;</button>
+        <button onclick="hideNextStep()" aria-label="Dismiss suggestion">✕</button>
       </div>
 
+      <!-- Command deck (input row) -->
       <div id="chat-input-row">
         <label id="upload-btn" title="Upload file" aria-label="Upload file for analysis">
           <input type="file" id="file-input" style="display:none" onchange="handleFileSelect(event)">
-          &#x1F4CE;
+          ⌗
         </label>
         <label for="prompt-input" class="sr-only">Chat message input</label>
-        <textarea id="prompt-input" placeholder="メッセージを入力...（/でスキル選択、Ctrl+Kでコマンドパレット）" rows="1" aria-label="Chat message input"></textarea>
-        <button id="execute-btn" onclick="executePrompt()" aria-label="Send message">&#x25B6;</button>
-        <button id="cancel-btn" onclick="cancelExecution()" style="display:none" aria-label="Cancel execution">&#x25A0;</button>
+        <textarea id="prompt-input" placeholder="Send a directive — type / for skills, Ctrl+K for palette" rows="1" aria-label="Chat message input"></textarea>
+        <button id="execute-btn" onclick="executePrompt()" aria-label="Send message">▸</button>
+        <button id="cancel-btn" onclick="cancelExecution()" style="display:none" aria-label="Cancel execution">■</button>
       </div>
 
       <!-- Execution status bar -->
       <div id="exec-status-bar" class="hidden" role="status" aria-live="polite">
-        <div id="exec-pulse"></div>
+        <div id="exec-pulse" aria-hidden="true"></div>
         <span id="exec-elapsed">0:00</span>
-        <span id="exec-phase">Initializing...</span>
+        <span id="exec-phase">Initializing</span>
         <span id="exec-tool-count">0 tools</span>
       </div>
     </section>
+
+    <!-- Inspector resize handle -->
+    <div id="log-resize" class="resize-handle-h" role="separator" aria-label="Resize inspector panel"></div>
+
+    <!-- ─── RIGHT: Inspector (Activity log + VM access) ─── -->
+    <section id="tool-log-panel" role="region" aria-label="Activity inspector">
+      <div id="tool-log-header">
+        <h2>Activity</h2>
+        <div id="tool-log-controls">
+          <label for="tool-log-filter" class="sr-only">Filter activity</label>
+          <input type="text" id="tool-log-filter" placeholder="Filter..." oninput="filterToolLog(this.value)">
+          <button onclick="clearToolLog()" title="Clear log" aria-label="Clear activity log">✕</button>
+          <button onclick="exportToolLog()" title="Export log" aria-label="Export activity log">⤓</button>
+        </div>
+      </div>
+      <div id="tool-log" aria-live="off"></div>
+    </section>
   </main>
 
-  <!-- Tool Log (resizable) -->
-  <div id="log-resize" class="resize-handle-h" role="separator" aria-label="Resize tool log"></div>
-  <section id="tool-log-panel" role="region" aria-label="Tool activity log">
-    <div id="tool-log-header">
-      <h2>Tool Activity</h2>
-      <div id="tool-log-controls">
-        <label for="tool-log-filter" class="sr-only">Filter tool log</label>
-        <input type="text" id="tool-log-filter" placeholder="Filter..." oninput="filterToolLog(this.value)">
-        <button onclick="clearToolLog()" title="Clear log" aria-label="Clear tool log">&#x1F5D1;</button>
-        <button onclick="exportToolLog()" title="Export log" aria-label="Export tool log">&#x2913;</button>
+  <!-- Floating VM Live View -->
+  <div id="vm-live-view" class="hidden" role="complementary" aria-label="VM Live View">
+    <div id="vm-live-header">
+      <span>VM Live · Host-Only</span>
+      <div>
+        <button onclick="toggleVmLiveView()" title="Minimize" aria-label="Minimize VM view">─</button>
+        <button onclick="closeVmLiveView()" aria-label="Close VM view">✕</button>
       </div>
     </div>
-    <div id="tool-log" aria-live="off"></div>
-  </section>
+    <div id="vm-live-body">
+      <img id="vm-live-img" src="" alt="VM Screenshot">
+      <div id="vm-live-placeholder" class="hidden">Waiting for VM screenshot…</div>
+    </div>
+  </div>
 
-  <!-- Report Modal (using dialog) -->
+  <!-- Report modal -->
   <dialog id="report-modal" class="modal">
     <div class="modal-content">
       <div class="modal-header">
         <span id="report-modal-title"></span>
-        <button onclick="closeReportModal()" aria-label="Close report">&times;</button>
+        <button onclick="closeReportModal()" aria-label="Close report">×</button>
       </div>
       <div id="report-modal-body"></div>
     </div>
@@ -283,7 +292,7 @@
     <div id="file-preview-card">
       <div id="file-preview-header">
         <span>File Info</span>
-        <button onclick="hideFilePreview()" aria-label="Close preview">&#x2715;</button>
+        <button onclick="hideFilePreview()" aria-label="Close preview">✕</button>
       </div>
       <div id="file-preview-body"></div>
       <div id="file-preview-actions">
@@ -292,15 +301,15 @@
     </div>
   </div>
 
-  <!-- Tab Context Menu -->
+  <!-- Tab context menu -->
   <div id="tab-context-menu" class="context-menu hidden" role="menu">
     <div onclick="renameSession()" role="menuitem" tabindex="0">Rename</div>
     <div onclick="closeSession()" role="menuitem" tabindex="0">Close</div>
   </div>
 
-  <!-- Attribution footer -->
+  <!-- Attribution -->
   <footer id="attribution">
-    <a href="https://www.flaticon.com/free-icons/malware" title="malware icons" target="_blank" rel="noopener">Malware icons created by Dewi Sari - Flaticon</a>
+    <a href="https://www.flaticon.com/free-icons/malware" title="malware icons" target="_blank" rel="noopener">Icon: Dewi Sari · Flaticon</a>
   </footer>
 
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>

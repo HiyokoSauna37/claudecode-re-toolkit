@@ -33,8 +33,13 @@ const state = {
   previewedFile: null,
 };
 
-const THEMES = ["default", "claude", "cyber", "arctic", "amethyst", "light"];
-const THEME_LABELS = { default: "Default", claude: "Claude", cyber: "Cyber", arctic: "Arctic", amethyst: "Amethyst", light: "Light" };
+const THEMES = ["forensic", "archive", "specter"];
+const THEME_LABELS = { forensic: "Forensic", archive: "Archive", specter: "Specter" };
+// Migrate legacy theme keys (older builds)
+const LEGACY_THEME_MIGRATE = {
+  default: "forensic", claude: "forensic", cyber: "specter",
+  arctic: "specter", amethyst: "forensic", light: "archive",
+};
 
 /* ── Init ──────────────────────────────────────── */
 document.addEventListener("DOMContentLoaded", () => {
@@ -73,18 +78,25 @@ document.addEventListener("DOMContentLoaded", () => {
 
 /* ── Theme ─────────────────────────────────────── */
 function loadTheme() {
-  const saved = localStorage.getItem("mat_theme") || "default";
+  let saved = localStorage.getItem("mat_theme") || "forensic";
+  if (LEGACY_THEME_MIGRATE[saved]) {
+    saved = LEGACY_THEME_MIGRATE[saved];
+    localStorage.setItem("mat_theme", saved);
+  }
+  if (!THEMES.includes(saved)) saved = "forensic";
+  document.documentElement.setAttribute("data-theme", saved);
   document.body.setAttribute("data-theme", saved);
 }
 
 function cycleTheme() {
-  const current = document.body.getAttribute("data-theme") || "default";
+  const current = document.body.getAttribute("data-theme") || "forensic";
   const idx = THEMES.indexOf(current);
   const next = THEMES[(idx + 1) % THEMES.length];
+  document.documentElement.setAttribute("data-theme", next);
   document.body.setAttribute("data-theme", next);
   localStorage.setItem("mat_theme", next);
   const btn = document.getElementById("theme-btn");
-  btn.title = `Theme: ${THEME_LABELS[next]}`;
+  if (btn) btn.title = `Theme: ${THEME_LABELS[next]}`;
   showToast(`Theme: ${THEME_LABELS[next]}`, "info");
 }
 
@@ -669,6 +681,15 @@ function exportChat() {
 
 /* ── Resizable Panels ─────────────────────────── */
 function setupResizablePanels() {
+  // Grid template: sidebar | handle | main | handle | inspector
+  const updateGridCols = (sidebarW, inspectorW) => {
+    const main = document.querySelector("main");
+    if (!main) return;
+    const sw = sidebarW != null ? sidebarW : (document.getElementById("sidebar")?.offsetWidth || 240);
+    const iw = inspectorW != null ? inspectorW : (document.getElementById("tool-log-panel")?.offsetWidth || 360);
+    main.style.gridTemplateColumns = `${sw}px 4px 1fr 4px ${iw}px`;
+  };
+
   const sidebarHandle = document.getElementById("sidebar-resize");
   if (sidebarHandle) {
     let startX, startW;
@@ -679,7 +700,7 @@ function setupResizablePanels() {
       sidebarHandle.classList.add("active");
       const onMove = (e) => {
         const w = Math.max(160, Math.min(400, startW + (e.clientX - startX)));
-        document.querySelector("main").style.gridTemplateColumns = `${w}px 4px 1fr`;
+        updateGridCols(w, null);
       };
       const onUp = () => {
         sidebarHandle.classList.remove("active");
@@ -691,17 +712,19 @@ function setupResizablePanels() {
     });
   }
 
+  // Inspector handle (formerly bottom log-resize, now right-side col-resize)
   const logHandle = document.getElementById("log-resize");
   if (logHandle) {
-    let startY, startH;
+    let startX, startW;
     logHandle.addEventListener("mousedown", (e) => {
       e.preventDefault();
-      startY = e.clientY;
-      startH = document.getElementById("tool-log-panel").offsetHeight;
+      startX = e.clientX;
+      startW = document.getElementById("tool-log-panel").offsetWidth;
       logHandle.classList.add("active");
       const onMove = (e) => {
-        const h = Math.max(60, Math.min(400, startH - (e.clientY - startY)));
-        document.getElementById("tool-log-panel").style.height = h + "px";
+        // Drag left to widen inspector (it's on the right edge)
+        const w = Math.max(220, Math.min(720, startW - (e.clientX - startX)));
+        updateGridCols(null, w);
       };
       const onUp = () => {
         logHandle.classList.remove("active");
