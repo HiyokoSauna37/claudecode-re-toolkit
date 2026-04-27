@@ -78,3 +78,8 @@ tools/ghidra-headless/yara-rules/*
 # OS
 Thumbs.db
 .DS_Store
+
+# Skill registry: cc-re-toolkit is its own source of truth.
+# sync-skills assumes a one-way sync from ~/.claude/skills, which we don't
+# use here — so don't track it (would just churn on every `cp` from life).
+.claude/skills/sync-skills/
