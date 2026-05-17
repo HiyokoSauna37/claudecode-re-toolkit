@@ -9,9 +9,10 @@
 | スキル | 概要 | バックエンド |
 |--------|------|-------------|
 | **malware-fetch** | 悪性Webサイトへの安全なアクセス、C2プロファイリング、ClickFix検出、OTX/VT/MB/TF脅威インテリジェンス | Docker (Chromium + Playwright) |
-| **ghidra-headless** | Ghidra による自動静的解析（デコンパイル、インポート、文字列、YARA、CAPA、.NETデコンパイル）、analyzer+reviewerエージェントチーム | Docker (Ghidra 12.0.3 + Kali/radare2) |
-| **malware-sandbox** | VMware VM を使ったマルウェア動的解析（アンパック、Frida DBI、FakeNet、DispatchLogger COM監視） | VMware Workstation |
-| **toolkit-setup** | .env作成、Dockerビルド、YARA/CAPA、VMware設定の対話型セットアップウィザード | — |
+| **ghidra-headless** | Ghidra による自動静的解析（デコンパイル、インポート、文字列、YARA、CAPA、FLOSS、oletools、.NETデコンパイル）、8フェーズ `analyze-full` パイプライン（自動フォールバック付き）、ZIPアーカイブ対応、maldev手法検出 | Docker (Ghidra 12.0.3 + Kali/radare2 + ILSpy) |
+| **malware-sandbox** | VMware VM を使ったマルウェア動的解析（3段階アンパック、Frida DBI、FakeNet、DispatchLogger COM監視、dumpulator エミュレーション、sandbox-evasion / vm-detect 自己診断） | VMware Workstation |
+| **threat-intel** | 18 OSINT サービス統合 CLI（VT, HA, Triage, Bazaar, ThreatFox, OTX, URLHaus, URLScan.io, Shodan, AbuseIPDB, GreyNoise, IPInfo, BGPView, Whois/RDAP, NIST, VulnCheck, Malpedia, Malshare）。hash/IP の横断相関、IOC抽出（txt/pdf/eml/url, SSRF防御）、MITRE ATT&CK マッピング、HTML/PDF レポート | Python (requests + SQLite cache) |
+| **toolkit-setup** | .env作成、Dockerビルド、YARA/CAPA/FLOSS/oletools/dumpulator、VMware設定の対話型セットアップウィザード | — |
 
 ## アーキテクチャ
 
@@ -30,8 +31,12 @@
 │ • AES暗号化   │ • IOC抽出     │ • メモリダンプ   │
 │ • Tor対応     │ • 自動分類     │ • x64dbg        │
 │ • C2プロファイル│ • .NETデコンパイル│ • DispatchLogger│
-│ • ClickFix検出│ • エージェントチーム│ • COM監視      │
-└───────────────┴───────────────┴─────────────────┘
+│ • ClickFix検出│ • ZIP対応     │ • COM監視       │
+├───────────────┴───────────────┴─────────────────┤
+│             threat-intel (Python)                │
+│  VT • HA • Triage • Bazaar • ThreatFox • OTX   │
+│  URLHaus • Shodan • AbuseIPDB • GreyNoise • ... │
+└─────────────────────────────────────────────────┘
 ```
 
 ## クイックスタート
@@ -131,16 +136,20 @@ python server.py
 - VM Live View（VMware スクリーンショットストリーミング）
 - パイプラインインジケーター（Triage → Static → Dynamic → Report）
 - コマンドパレット（Ctrl+K）、キーボードショートカット
-- 複数テーマ（Default、Claude、Cyber、Arctic、Amethyst、Light）
+- Readability Tweaks パネル（Density / Theme のセグメントコントロール、localStorage 永続化）
+- 複数テーマ（Forensic、Default、Claude、Cyber、Arctic、Amethyst、Light）
+- キャンセルボタンが Claude サブプロセスツリーごとキル（Windows: taskkill /F /T）— node.exe や派生ツールも一緒に停止
 
 > **注意:** 開発中のプロトタイプです。一部の機能が不安定な場合があります。
 
 ## 典型的なワークフロー
 
-1. **Web収集**: malware-fetch で悪性URLに安全にアクセスし、アーティファクトを取得
-2. **静的解析**: ghidra-headless でダウンロードしたバイナリを解析（YARA、CAPA、デコンパイル）
-3. **動的解析**: パック/難読化された検体は malware-sandbox でランタイム解析
-4. **再解析**: アンパック後のバイナリを ghidra-headless で再度デコンパイル
+1. **Web収集**: malware-fetch で悪性URLに安全にアクセスし、アーティファクトを取得（`Quarantine/` に暗号化保存）
+2. **静的解析**: `ghidra.sh analyze-full` を実行（生PE、`.enc.gz`、`--zip-password` ZIP に対応）— 自動フォールバック付き8フェーズパイプライン（Phase 0-7: PE Triage → FLOSS → binary-viz → YARA → CAPA → Ghidra デコンパイル → IOC 抽出 → 分類。Office 検出時は oletools が Phase 2b で自動挿入。Ghidra 障害時は PE フォールバックで IOC/分類を続行）
+3. **静的→動的ブリッジ**: `static_hints.py` が Ghidra の出力を読み、次フェーズで使う Frida フック対象、FakeNet ルール、Procmon フィルタを自動生成
+4. **動的解析**: パック/難読化された検体は malware-sandbox（`analyze` / `unpack auto` / `frida-analyze`）でランタイム解析
+5. **コンフィグ抽出**: メモリダンプ後、`dumpulator_extractor.py` がホスト上でダンプをエミュレートし、マルウェアを再実行せずに C2 IOC を抽出
+6. **再解析**: アンパック後のバイナリを ghidra-headless で再度デコンパイル
 
 ## セキュリティ
 
@@ -171,16 +180,23 @@ Go 製 CLI ツールによる安全な Web フォレンジック:
 ### ghidra-headless
 
 Docker ベースの Ghidra 自動解析:
+- **8フェーズ `analyze-full` パイプライン**（Phase 0-7）: PE Triage → FLOSS → binary-viz → YARA → CAPA → Ghidra デコンパイル → IOC 抽出 → マルウェア分類（シーケンシャル実行、1コマンドで完結）。Office ドキュメント検出時は Phase 2b として oletools が自動挿入。Ghidra 障害時は `pe_fallback_extract.py` が自動実行され、pefile ベースで IOC/分類パイプラインを続行
+- **ZIP アーカイブ対応**: `analyze-full --zip-password infected sample.zip` — コンテナ内で展開（ホストに生バイナリが出現しない）、最大サイズファイルを自動選択してパイプライン実行
+- **Maldev 手法検出**（`maldev-detect`）: 15 のオペレータ級テクニック（PEB walking、ROR13/FNV-1a ハッシュ、Process Hollowing、Early Bird APC、Direct Syscalls、Reflective DLL、インライン AES 等）を ATT&CK マッピング付きで検出。`scan-binary` モードは Ghidra 不要・5秒で完了
 - フルバイナリ解析（info、imports、exports、strings、functions、xrefs、decompile）
-- .NET バイナリの ILSpy CLI デコンパイル（dotnet-decompile、dotnet-metadata、dotnet-types）
+- .NET バイナリの ILSpy CLI デコンパイル（dotnet-decompile、dotnet-metadata、dotnet-types）— 別コンテナの `dotnet-decompiler` イメージを共有利用
 - PE トリアージ（Phase 0）によるパッカー検出・エントロピー分析
+- **FLOSS による難読化文字列の抽出**（`floss_analyzer.py`）— 通常の strings では取れないスタック構築文字列、短い XOR/ROT ループ、エミュレーション復号文字列を抽出
+- **Office マルウェア解析**（`office_analyzer.py`）— oletools ラッパーで `.doc`/`.xls`/`.ppt`/`.docx`/`.rtf`/`.msg` の VBA マクロ、OLE ストリーム、RTF/DDE ペイロードを解析
+- **バイナリ可視化**（`binary_viz.py`）— エントロピープロファイル + バイグラムヒートマップ + バイトヒストグラムを PNG 出力。パッカーの有無を一目で判定
 - signature-base / yara-forge ルールによる YARA スキャン
 - Mandiant CAPA によるケイパビリティ分析 + MITRE ATT&CK マッピング
 - IOC 自動抽出（IP、ドメイン、URL、ハッシュ、レジストリキー）
 - マルウェア種別自動分類（InfoStealer、Ransomware、RAT、Dropper、Loader、Worm）
 - Analyzer + Reviewer エージェントチームによる品質保証付き解析セッション
 - Kali Linux コンテナの radare2 による高速トリアージ、エントロピー分析、暗号定数検出、バイナリ差分比較
-- ヘルパースクリプト: `lnk-parser.py`（LNK トリアージ）、`pe-encrypt.py`（VM 転送用 `.enc.gz` 生成）、`chunk-extract.py`（`.rdata` 内の埋込バイナリ抽出）
+- ヘルパースクリプト: `lnk-parser.py`（LNK トリアージ）、`pe-encrypt.py`（VM 転送用 `.enc.gz` 生成）、`chunk-extract.py`（`.rdata` 内の埋込バイナリ抽出）、`pe_fallback_extract.py`（Ghidra 非依存の strings/imports 抽出）
+- scripts/ ディレクトリの volume mount により、スクリプト編集が Docker rebuild なしで即座に反映
 - コマンドログ自動記録 — `ghidra.sh` 実行のたびに `tools/ghidra-headless/logs/YYYYMMDD_<target>.md` に自動追記。確認は `ghidra.sh log-show <binary>`
 
 ### malware-sandbox
@@ -190,11 +206,24 @@ VMware Workstation VM 自動操作:
 - 3段階アンパックシステム（memdump-racer → TinyTracer → x64dbg）
 - Frida DBI によるアンチデバッグ回避 + メモリダンプ（ゲスト内 Frida 有無の preflight チェック付き）
 - DispatchLogger COM 監視によるスクリプト系マルウェア解析（VBS、JS、HTA、PowerShell、Office マクロ）
-- FakeNet-NG 連携による C2 プロトコルキャプチャ
+- FakeNet-NG 連携による C2 プロトコルキャプチャ。`fakenet_validate.py` 設定バリデータ + `build_http_response.py` レスポンスビルダーを同梱
+- **`dumpulator_extractor.py`** — プロセスのミニダンプをホスト側で unicorn/dumpulator エミュレートし、文字列・IOC を抽出。特定 RVA（例: コンフィグ復号関数）の呼び出しも可能。マルウェアを再実行せず追加情報を取得できる
+- **`static_hints.py`** — ghidra-headless の出力を読み、Frida フック対象、FakeNet ルール、Procmon フィルタ、推奨 `sandbox.sh` コマンドを自動出力（静的→動的フィードバックループの橋渡し）
+- **`sandbox-evasion-check.exe`** — VM 内で実行し、マルウェアが解析環境判定に使うソフト的シグナル（ディスク/RAM 容量、稼働時間、解析プロセス）を洗い出す
+- **`vm-detect-checker.exe`** — VM 内で実行し、VMProtect/Themida 等が見るハード的指紋（SMBIOS、ACPI、MAC OUI）を列挙
+- pre/post レジストリ差分は `regshot_diff.py`
 - ネットワーク隔離管理
 - 包括的なゲスト内ツール群（x64dbg、PE-sieve、HollowsHunter 等）
 - VM 内での `.enc.gz` quarantine ファイル自動復号（ホスト上に生マルウェアを一切展開しない）
 - BOM 無し UTF-8 スクリプト転送 + 常駐ツール向け `Start-Process` パターンで vmrun ハングを回避
+
+## 補助ツール（スタンドアロン）
+
+3つのメインスキルとは独立して動くバイナリ／コンテナ群:
+
+- **`tools/quarantine/quarantine.exe`** — Quarantine ブラウザ CLI: `quarantine list` / `info <#|domain>` / `analyze <#|domain>`（復号 + ghidra `analyze-full` を1コマンドで実行）。malware-fetch が捕獲した検体を `.enc.gz` を意識せず一覧・解析できる
+- **`tools/mergen/mergen.sh`** — VMProtect デバーチャライゼーション（LLVM IR リフティング）。動的アンパックでは到達できない保護関数を LLVM IR に持ち上げて可読化する
+- **`tools/dotnet-decompiler/`** — ILSpy CLI Docker イメージ。`ghidra.sh dotnet-decompile` から自動利用されるが、.NET バッチワークフロー用に直接呼び出すことも可能
 
 ## ライセンス
 
