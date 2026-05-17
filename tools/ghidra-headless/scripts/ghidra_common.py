@@ -14,8 +14,8 @@ class GhidraReport(object):
 
     def __init__(self, script_name, suffix, title=None, program=None):
         self.script_name = script_name
-        self.program = program  # Must be passed from calling script as currentProgram
-        self.name = self.program.getName()
+        self.program = program
+        self.name = self.program.getName() if self.program else "unknown"
         self.output_dir = "/analysis/output"
         self.suffix = suffix
         self.title = title or suffix.replace("_", " ").title()

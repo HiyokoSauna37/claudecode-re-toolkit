@@ -93,6 +93,35 @@ prepare_binary() {
 RESOLVED_BINARY=""
 NEEDS_CLEANUP=0
 
+ZIP_PASSWORD=""
+
+extract_zip_in_container() {
+    local zip_path="$1"
+    local password="$2"
+    local bname
+    bname=$(basename "$zip_path")
+
+    echo "[*] Copying ZIP to container..." >&2
+    docker cp "$zip_path" "$CONTAINER:/tmp/$bname"
+
+    echo "[*] Extracting ZIP inside container..." >&2
+    dexec "$CONTAINER" rm -rf /tmp/zip_extracted
+    dexec "$CONTAINER" mkdir -p /tmp/zip_extracted
+    if [ -n "$password" ]; then
+        dexec "$CONTAINER" 7z x -p"$password" -o/tmp/zip_extracted "/tmp/$bname" -y >&2
+    else
+        dexec "$CONTAINER" 7z x -o/tmp/zip_extracted "/tmp/$bname" -y >&2
+    fi
+    dexec "$CONTAINER" rm -f "/tmp/$bname" 2>/dev/null || true
+
+    # Select largest file (typical: single malware in ZIP)
+    local target
+    target=$(dexec "$CONTAINER" sh -c "find /tmp/zip_extracted -type f -exec ls -lS {} + | head -1 | awk '{print \$NF}'" 2>/dev/null)
+    [ -z "$target" ] && { echo "Error: ZIP extraction produced no files" >&2; return 1; }
+    echo "[*] ZIP target: $(basename "$target")" >&2
+    echo "$target"
+}
+
 resolve_binary() {
     local binary_path="$1"
     [ -z "$binary_path" ] && { echo "Error: No binary specified" >&2; return 1; }
@@ -107,7 +136,11 @@ resolve_binary() {
         fi
     fi
 
-    if [[ "$binary_path" == *.enc.gz ]]; then
+    if [[ "$binary_path" == *.zip ]]; then
+        echo "[*] Detected ZIP archive, extracting in container..." >&2
+        RESOLVED_BINARY=$(extract_zip_in_container "$binary_path" "$ZIP_PASSWORD") || { echo "Error: ZIP extraction failed" >&2; return 1; }
+        NEEDS_CLEANUP=1
+    elif [[ "$binary_path" == *.enc.gz ]]; then
         echo "[*] Detected .enc.gz quarantine file, auto-decrypting in container..." >&2
         RESOLVED_BINARY=$(decrypt_in_container "$binary_path") || { echo "Error: Decryption failed" >&2; return 1; }
         NEEDS_CLEANUP=1
@@ -423,6 +456,7 @@ case "${1:-}" in
         dexec "$CONTAINER" python3 /tmp/yara_scanner.py "$SCAN_TARGET" \
             --output-dir /tmp/output --rules-dir /tmp/yara-rules
         yara_json="/tmp/output/$(basename "${SCAN_TARGET%.*}")_yara.json"
+        dexec "$CONTAINER" cp /tmp/output/*_yara.json /analysis/output/ 2>/dev/null || true
         docker cp "$CONTAINER:$yara_json" "$SCRIPT_DIR_WIN/output/" 2>/dev/null || \
             docker cp "$CONTAINER:/tmp/output/" "$SCRIPT_DIR_WIN/output/" 2>/dev/null || true
         [ -n "$YARA_CLEANUP" ] && cleanup_container "$YARA_CLEANUP"
@@ -432,6 +466,11 @@ case "${1:-}" in
         [ -z "$2" ] && { echo "Usage: ghidra.sh capa <binary|encrypted.enc.gz>"; exit 1; }
         echo "=== CAPA Analysis: $(basename "$2") ==="
         run_host_tool "$2" capa_scanner.py --output-dir "$SCRIPT_DIR_WIN/output"
+        ;;
+    pe-fallback-extract)
+        [ -z "$2" ] && { echo "Usage: ghidra.sh pe-fallback-extract <binary|file.enc.gz>"; exit 1; }
+        echo "=== PE Fallback Extraction: $(basename "$2") ==="
+        run_host_tool "$2" pe_fallback_extract.py --output-dir "$SCRIPT_DIR_WIN/output"
         ;;
     pe-triage)
         # Usage:
@@ -492,6 +531,70 @@ case "${1:-}" in
         clf_target=$(basename "${2%.enc.gz}")
         echo "=== Malware Classification: $clf_target ==="
         python3 "$SCRIPT_DIR_WIN/malware_classifier.py" "$clf_target" --output-dir "$SCRIPT_DIR_WIN/output"
+        ;;
+    maldev-detect|maldev|mdt)
+        if [ -z "$2" ] || [ "$2" = "-h" ] || [ "$2" = "--help" ]; then
+            cat <<'MDT_HELP'
+Usage:
+  ghidra.sh maldev-detect <binary>                   # analyze 既存output (デフォルト)
+  ghidra.sh maldev-detect scan-binary <path>         # 生バイナリから直接検出
+  ghidra.sh maldev-detect list                       # 検出可能 15 テクニック一覧
+  ghidra.sh maldev-detect <binary> --min-severity high
+  ghidra.sh maldev-detect <binary> --json-only
+
+説明:
+  f00crew 0x33 系のオペレータ技術 (PEB walking / API hashing / Process Hollowing /
+  Early Bird APC / Kernel callback abuse / DKOM / 多層暗号 / Direct syscall) を
+  検出して MITRE ATT&CK にマップする。
+
+モード:
+  analyze       既存の analyze-full output を読んで検出（精密、デフォルト）
+  scan-binary   生バイナリ直接スキャン（Ghidra 不要、5 秒以内）
+  list          15 テクニックのカタログ表示
+
+出力:
+  output/<binary>_maldev.json  severity / confidence / 証拠 / ATT&CK 付き
+
+例:
+  ghidra.sh maldev-detect stealc                    # ステム名
+  ghidra.sh maldev-detect input/stealc.exe          # フルパス
+  ghidra.sh maldev-detect sample.enc.gz             # 暗号化済 (.enc.gz は自動展開しない、scan-binary を使う)
+  ghidra.sh maldev-detect scan-binary sample.exe    # Ghidra 結果を待ちたくない時
+  ghidra.sh maldev-detect list                      # 何が検出できるか確認
+
+備考:
+  - analyze モードは先に `ghidra.sh analyze <binary>` が必要
+  - YARA カスタムルール (yara-rules/custom/maldev_techniques.yar) と相補的
+MDT_HELP
+            exit 0
+        fi
+
+        # サブコマンド (scan-binary / list) はそのまま透過、それ以外はステム化
+        case "$2" in
+            list)
+                python3 "$SCRIPT_DIR_WIN/maldev_techniques.py" list
+                ;;
+            scan-binary)
+                [ -z "$3" ] && { echo "Usage: ghidra.sh maldev-detect scan-binary <path>"; exit 1; }
+                echo "=== MalDev Scan: $(basename "$3") ==="
+                python3 "$SCRIPT_DIR_WIN/maldev_techniques.py" scan-binary \
+                    "$3" --output-dir "$SCRIPT_DIR_WIN/output" "${@:4}"
+                ;;
+            analyze)
+                [ -z "$3" ] && { echo "Usage: ghidra.sh maldev-detect analyze <binary>"; exit 1; }
+                mdt_target=$(basename "${3%.enc.gz}")
+                echo "=== MalDev Detect: $mdt_target ==="
+                python3 "$SCRIPT_DIR_WIN/maldev_techniques.py" analyze \
+                    "$mdt_target" --output-dir "$SCRIPT_DIR_WIN/output" "${@:4}"
+                ;;
+            *)
+                # 後方互換: analyze モードのショートカット
+                mdt_target=$(basename "${2%.enc.gz}")
+                echo "=== MalDev Detect: $mdt_target ==="
+                python3 "$SCRIPT_DIR_WIN/maldev_techniques.py" analyze \
+                    "$mdt_target" --output-dir "$SCRIPT_DIR_WIN/output" "${@:3}"
+                ;;
+        esac
         ;;
 
     # --- FLOSS obfuscated string analysis (host-side) ---
@@ -588,26 +691,35 @@ case "${1:-}" in
     # --- Full pipeline ---
     analyze-full)
         if [ -z "$2" ]; then
-            echo "Usage: ghidra.sh analyze-full <binary|file.enc.gz>"
+            echo "Usage: ghidra.sh analyze-full [--zip-password PW] <binary|file.enc.gz|file.zip>"
             exit 1
         fi
+        # Parse --zip-password flag
+        _target="$2"
+        if [ "$2" = "--zip-password" ]; then
+            ZIP_PASSWORD="$3"
+            _target="$4"
+            [ -z "$_target" ] && { echo "Usage: ghidra.sh analyze-full --zip-password PW <file.zip>"; exit 1; }
+        fi
         ensure_running
-        BINARY_NAME=$(basename "$2" | sed 's/\.enc\.gz$//' | sed 's/\.[^.]*$//')
-        echo "=== Full Analysis Pipeline: $(basename "$2") ==="
+        BINARY_NAME=$(basename "$_target" | sed 's/\.enc\.gz$//' | sed 's/\.[^.]*$//')
+        echo "=== Full Analysis Pipeline: $(basename "$_target") ==="
 
         # Resolve binary once
-        if [[ "$2" == *.enc.gz ]]; then
-            resolve_binary "$2" || exit 1
+        if [[ "$_target" == *.enc.gz ]] || [[ "$_target" == *.zip ]]; then
+            resolve_binary "$_target" || exit 1
             PIPELINE_BINARY="$RESOLVED_BINARY"
+            # Update BINARY_NAME from actual resolved binary (ZIP may have different filename)
+            BINARY_NAME=$(basename "$PIPELINE_BINARY" | sed 's/\.enc\.gz$//' | sed 's/\.[^.]*$//')
             win_temp="${USERPROFILE}/AppData/Local/Temp"
             PIPELINE_TMPDIR=$(mktemp -d -p "$win_temp")
             dec_name=$(basename "$PIPELINE_BINARY")
             docker cp "$CONTAINER:$PIPELINE_BINARY" "$PIPELINE_TMPDIR/$dec_name"
             HOST_BINARY="$PIPELINE_TMPDIR/$dec_name"
         else
-            resolve_binary "$2" || exit 1
+            resolve_binary "$_target" || exit 1
             PIPELINE_BINARY="$RESOLVED_BINARY"
-            HOST_BINARY="$2"
+            HOST_BINARY="$_target"
             PIPELINE_TMPDIR=""
         fi
         auto_detect_processor "$PIPELINE_BINARY"
@@ -666,6 +778,7 @@ case "${1:-}" in
             echo "[!] YARA scan failed (non-critical, continuing)" >&2
             PIPELINE_ERRORS+=("YARA-Scan")
         fi
+        dexec "$CONTAINER" cp /tmp/output/*_yara.json /analysis/output/ 2>/dev/null || true
         docker cp "$CONTAINER:/tmp/output/" "$SCRIPT_DIR_WIN/output/" 2>/dev/null || true
 
         echo "[4/7] CAPA Analysis..."
@@ -676,8 +789,12 @@ case "${1:-}" in
 
         echo "[5/7] Ghidra Analysis..."
         if ! run_headless "$PIPELINE_BINARY" "${ALL_SCRIPTS[@]}"; then
-            echo "[!] Ghidra analysis failed" >&2
+            echo "[!] Ghidra analysis failed — running PE fallback extraction" >&2
             PIPELINE_ERRORS+=("Ghidra")
+            if [ -n "$HOST_BINARY" ] && [ -f "$HOST_BINARY" ]; then
+                python3 "$SCRIPT_DIR_WIN/pe_fallback_extract.py" "$HOST_BINARY" \
+                    --output-dir "$SCRIPT_DIR_WIN/output" 2>&1 || true
+            fi
         fi
 
         echo "[6/7] IOC Extraction..."
@@ -898,6 +1015,13 @@ Post-Analysis (host-side):
   capa <binary>                   CAPA (capabilities + ATT&CK)
   ioc-extract <name>              Extract IOCs from output files
   classify <name>                 Classify malware type
+  maldev-detect <name>            Detect operator-tier maldev techniques
+  maldev-detect scan-binary <p>   ↳ direct binary scan (no Ghidra needed)
+  maldev-detect list              ↳ list catalog of 14 detectable techniques
+                                  (PEB walking, API hashing, hollowing, Early Bird APC,
+                                   kernel callback abuse, DKOM, multi-layer crypto,
+                                   direct syscalls / Hell's Gate)
+                                  Run 'maldev-detect --help' for full help.
   analyze-full <binary>           Full pipeline (all of the above, 7 steps)
 
 Office Document Analysis (in-container, oletools):

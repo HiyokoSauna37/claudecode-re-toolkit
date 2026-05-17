@@ -5,6 +5,7 @@ services:
     volumes:
       - ./input:/analysis/input
       - ./output:/analysis/output
+      - ./scripts:/opt/ghidra-scripts
     environment:
       - MAXMEM=4G
     tty: true

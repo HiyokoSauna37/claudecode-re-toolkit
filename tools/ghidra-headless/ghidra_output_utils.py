@@ -20,9 +20,18 @@ GHIDRA_OUTPUT_SUFFIXES = {
     "decrypted_strings": "_decrypted_strings.txt",
 }
 
+# PE fallback suffixes (generated when Ghidra scripts fail)
+PE_FALLBACK_SUFFIXES = {
+    "strings": "_pe_strings.txt",
+    "imports": "_pe_imports.txt",
+}
+
 
 def find_ghidra_outputs(binary_name: str, output_dir: Path) -> Dict[str, Path]:
     """Find Ghidra output files and dotnet-decompiler output for a given binary name.
+
+    Falls back to PE-extracted files (_pe_strings.txt, _pe_imports.txt) when
+    Ghidra outputs are not available.
 
     Args:
         binary_name: Base name of the analyzed binary (without extension).
@@ -37,6 +46,13 @@ def find_ghidra_outputs(binary_name: str, output_dir: Path) -> Dict[str, Path]:
         path = output_dir / f"{binary_name}{suffix}"
         if path.exists():
             files[key] = path
+
+    # Fallback: use PE-extracted files if Ghidra outputs are missing
+    for key, suffix in PE_FALLBACK_SUFFIXES.items():
+        if key not in files:
+            path = output_dir / f"{binary_name}{suffix}"
+            if path.exists():
+                files[key] = path
 
     # Also scan dotnet-decompiler output (.cs files)
     dotnet_base = output_dir.parent.parent / "dotnet-decompiler" / "output"
