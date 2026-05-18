@@ -84,6 +84,86 @@ def run_die(filepath: str) -> list[dict] | None:
     return None
 
 
+OLE_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
+
+
+def analyze_msi(filepath: str) -> dict:
+    """MSI/OLE compound document triage (non-PE path)."""
+    binary = Path(filepath)
+    raw = binary.read_bytes()
+    result = {
+        "file": binary.name,
+        "path": str(binary),
+        "size": binary.stat().st_size,
+        "timestamp": datetime.now().isoformat(),
+        "hashes": file_hashes(binary),
+        "file_entropy": calc_entropy(raw),
+        "file_type": "MSI_INSTALLER",
+    }
+
+    try:
+        import olefile
+        ole = olefile.OleFileIO(str(binary))
+        streams = ["/".join(s) for s in ole.listdir()]
+        result["ole_streams"] = len(streams)
+
+        # Extract readable strings from all small streams (MSI table data)
+        all_strings = []
+        for stream in ole.listdir():
+            sname = "/".join(stream)
+            size = ole.get_size(sname)
+            if size < 100000:
+                data = ole.openstream(sname).read()
+                current = []
+                for b in data:
+                    if 32 <= b < 127:
+                        current.append(chr(b))
+                    else:
+                        if len(current) >= 4:
+                            all_strings.append("".join(current))
+                        current = []
+                if len(current) >= 4:
+                    all_strings.append("".join(current))
+
+        # Parse MSI metadata from strings
+        msi_meta = {}
+        for s in all_strings:
+            if "ProductName" in s:
+                idx = all_strings.index(s)
+                # ProductName value is typically nearby
+            if s.startswith("{") and s.endswith("}") and len(s) == 38:
+                msi_meta.setdefault("guids", []).append(s)
+
+        # Find file references (look for .exe, .dll patterns)
+        embedded_files = []
+        for s in all_strings:
+            lower = s.lower()
+            if any(lower.endswith(ext) for ext in [".exe", ".dll", ".dat", ".db", ".idx", ".bin"]):
+                if len(s) < 100 and "|" not in s:
+                    embedded_files.append(s)
+            elif "|" in s and any(ext in lower for ext in [".exe", ".dll"]):
+                parts = s.split("|")
+                if len(parts) == 2:
+                    embedded_files.append(parts[1])
+
+        result["msi_metadata"] = msi_meta
+        result["embedded_files"] = list(set(embedded_files))[:20]
+
+        # Find product/manufacturer
+        for s in all_strings:
+            if "Manufacturer" in s:
+                idx = all_strings.index(s)
+        ole.close()
+    except ImportError:
+        result["note"] = "olefile not installed; install with: pip install olefile"
+    except Exception as e:
+        result["ole_error"] = str(e)
+
+    result["verdict"] = ["MSI_INSTALLER"]
+    result["recommendation"] = "Extract with 7z, identify embedded PEs, run analyze-full on each"
+    return result
+
+
 def analyze_pe(filepath: str) -> dict:
     import pefile
 
@@ -99,6 +179,10 @@ def analyze_pe(filepath: str) -> dict:
     # Full file entropy
     raw = binary.read_bytes()
     result["file_entropy"] = calc_entropy(raw)
+
+    # Check if this is an MSI/OLE file, not a PE
+    if raw[:8] == OLE_MAGIC:
+        return analyze_msi(filepath)
 
     try:
         pe = pefile.PE(str(binary))
@@ -353,7 +437,13 @@ def main():
         print(f"ERROR: File not found: {args.binary}")
         sys.exit(1)
 
-    result = analyze_pe(str(binary))
+    # Early detection: MSI/OLE vs PE
+    with open(binary, "rb") as f:
+        magic = f.read(8)
+    if magic == OLE_MAGIC:
+        result = analyze_msi(str(binary))
+    else:
+        result = analyze_pe(str(binary))
 
     if args.json:
         print(json.dumps(result, indent=2, ensure_ascii=False))

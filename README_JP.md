@@ -97,8 +97,8 @@ docker compose -f tools/ghidra-headless/docker-compose.yml up -d
 | `VM_GUEST_USER` | ゲスト OS のログインユーザー名 | malware-sandbox |
 | `VM_GUEST_PASS` | ゲスト OS のログインパスワード | malware-sandbox |
 | `VM_GUEST_PROFILE` | ゲスト OS のユーザープロファイルディレクトリ。例: `C:\Users\analyst` | malware-sandbox |
-| `VM_SNAPSHOT` | 解析後に復帰するクリーンスナップショット名（デフォルト: `clean_with_tools`） | malware-sandbox（任意） |
-| `VMRUN_TIMEOUT` | vmrun コマンドのタイムアウト秒数（デフォルト: `30`） | malware-sandbox（任意） |
+| `VM_SNAPSHOT` | 解析後に復帰するクリーンスナップショット名（デフォルト: `clean_with_tools_fakenet_ca`） | malware-sandbox（任意） |
+| `VMRUN_TIMEOUT` | vmrun コマンドのタイムアウト秒数（デフォルト: `120`）。50MB 以上のファイルには `300` を推奨 | malware-sandbox（任意） |
 
 > **補足:** malware-fetch と ghidra-headless は `QUARANTINE_PASSWORD` と API キー（任意）のみで利用可能。`VM_*` 変数は malware-sandbox を使う場合のみ必要。
 
@@ -182,7 +182,9 @@ Go 製 CLI ツールによる安全な Web フォレンジック:
 Docker ベースの Ghidra 自動解析:
 - **8フェーズ `analyze-full` パイプライン**（Phase 0-7）: PE Triage → FLOSS → binary-viz → YARA → CAPA → Ghidra デコンパイル → IOC 抽出 → マルウェア分類（シーケンシャル実行、1コマンドで完結）。Office ドキュメント検出時は Phase 2b として oletools が自動挿入。Ghidra 障害時は `pe_fallback_extract.py` が自動実行され、pefile ベースで IOC/分類パイプラインを続行
 - **ZIP アーカイブ対応**: `analyze-full --zip-password infected sample.zip` — コンテナ内で展開（ホストに生バイナリが出現しない）、最大サイズファイルを自動選択してパイプライン実行
-- **Maldev 手法検出**（`maldev-detect`）: 15 のオペレータ級テクニック（PEB walking、ROR13/FNV-1a ハッシュ、Process Hollowing、Early Bird APC、Direct Syscalls、Reflective DLL、インライン AES 等）を ATT&CK マッピング付きで検出。`scan-binary` モードは Ghidra 不要・5秒で完了
+- **Maldev 手法検出**（`maldev-detect`）: 18 のオペレータ級テクニック（PEB walking、ROR13/FNV-1a ハッシュ、Process Hollowing、Early Bird APC、Direct Syscalls、Reflective DLL、インライン AES、VM検知（ハードウェア/ソフトウェアフィンガープリント）、時間ベース回避等）を ATT&CK マッピング付きで検出。`scan-binary` モードは Ghidra 不要・5秒で完了
+- **Anti-VM バイナリパッチャー**（`binary_patcher.py`）: マルウェアバイナリ内の VM 検知文字列（VMware ドライバ名、CPUID ベンダー ID、MAC プレフィクス等）をパッチしてサンドボックス回避を無効化。`--auto-vm`（既知パターン自動検出）、`--patch-string`（検索/置換）、`--patch`（hex オフセット指定）に対応。Docker コンテナ内でのみ実行
+- **再暗号化**（`ghidra.sh encrypt`）: パッチ済みバイナリを `.enc.gz` quarantine 形式に再暗号化し、安全に VM に転送
 - フルバイナリ解析（info、imports、exports、strings、functions、xrefs、decompile）
 - .NET バイナリの ILSpy CLI デコンパイル（dotnet-decompile、dotnet-metadata、dotnet-types）— 別コンテナの `dotnet-decompiler` イメージを共有利用
 - PE トリアージ（Phase 0）によるパッカー検出・エントロピー分析
@@ -195,14 +197,15 @@ Docker ベースの Ghidra 自動解析:
 - マルウェア種別自動分類（InfoStealer、Ransomware、RAT、Dropper、Loader、Worm）
 - Analyzer + Reviewer エージェントチームによる品質保証付き解析セッション
 - Kali Linux コンテナの radare2 による高速トリアージ、エントロピー分析、暗号定数検出、バイナリ差分比較
-- ヘルパースクリプト: `lnk-parser.py`（LNK トリアージ）、`pe-encrypt.py`（VM 転送用 `.enc.gz` 生成）、`chunk-extract.py`（`.rdata` 内の埋込バイナリ抽出）、`pe_fallback_extract.py`（Ghidra 非依存の strings/imports 抽出）
+- **Go バイナリ解析**: Go コンパイル済みマルウェア向けの専用ワークフロー（gopclntab 対応の文字列抽出、モジュール/シンボル解析）。Go バイナリは PE インポートが極少だが、raw 文字列抽出で豊富な IOC を取得可能
+- ヘルパースクリプト: `lnk-parser.py`（LNK トリアージ）、`pe-encrypt.py`（VM 転送用 `.enc.gz` 生成）、`chunk-extract.py`（`.rdata` 内の埋込バイナリ抽出）、`pe_fallback_extract.py`（Ghidra 非依存の strings/imports 抽出）、`binary_patcher.py`（Anti-VM 文字列パッチ）
 - scripts/ ディレクトリの volume mount により、スクリプト編集が Docker rebuild なしで即座に反映
 - コマンドログ自動記録 — `ghidra.sh` 実行のたびに `tools/ghidra-headless/logs/YYYYMMDD_<target>.md` に自動追記。確認は `ghidra.sh log-show <binary>`
 
 ### malware-sandbox
 
 VMware Workstation VM 自動操作:
-- ワンコマンド `analyze` ワークフロー — スナップショット復帰、Host-Only ネットワーク隔離、マルウェア転送、pre/post 状態取得、HollowsHunter 実行、最終復帰までを自動実行（手動 `start` / `net-isolate` 不要）
+- ワンコマンド `analyze` ワークフロー — スナップショット復帰、Host-Only ネットワーク隔離、マルウェア転送、pre/post 状態取得、HollowsHunter 実行、最終復帰までを自動実行（手動 `start` / `net-isolate` 不要）。`--anti-vm` フラグで VMX ハードニング（CPUID/SMBIOS/MAC 偽装）を VM 起動前に自動適用
 - 3段階アンパックシステム（memdump-racer → TinyTracer → x64dbg）
 - Frida DBI によるアンチデバッグ回避 + メモリダンプ（ゲスト内 Frida 有無の preflight チェック付き）
 - DispatchLogger COM 監視によるスクリプト系マルウェア解析（VBS、JS、HTA、PowerShell、Office マクロ）

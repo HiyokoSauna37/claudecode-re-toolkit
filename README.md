@@ -98,8 +98,8 @@ Copy `.env.example` to `.env` and configure:
 | `VM_GUEST_USER` | Guest OS login username | malware-sandbox |
 | `VM_GUEST_PASS` | Guest OS login password | malware-sandbox |
 | `VM_GUEST_PROFILE` | Guest OS user profile directory. Example: `C:\Users\analyst` | malware-sandbox |
-| `VM_SNAPSHOT` | Clean snapshot name to revert to after analysis (default: `clean_with_tools`) | malware-sandbox (optional) |
-| `VMRUN_TIMEOUT` | Timeout in seconds for vmrun commands (default: `30`) | malware-sandbox (optional) |
+| `VM_SNAPSHOT` | Clean snapshot name to revert to after analysis (default: `clean_with_tools_fakenet_ca`) | malware-sandbox (optional) |
+| `VMRUN_TIMEOUT` | Timeout in seconds for vmrun commands (default: `120`). Increase to `300` for large files (>50MB) | malware-sandbox (optional) |
 
 > **Note:** malware-fetch and ghidra-headless only require `QUARANTINE_PASSWORD` and optionally the API keys. The `VM_*` variables are only needed if you use malware-sandbox.
 
@@ -183,7 +183,9 @@ Go-based CLI tool for safe web forensics:
 Docker-based Ghidra automation:
 - **8-Phase `analyze-full` pipeline** (Phase 0-7): PE Triage → FLOSS → binary-viz → YARA → CAPA → Ghidra decompile → IOC extract → malware classify (sequential, single command). oletools is inserted as Phase 2b when an Office document is detected. Auto-fallback with `pe_fallback_extract.py` when Ghidra scripts fail — IOC/classification continues via pefile-based extraction.
 - **ZIP archive support**: `analyze-full --zip-password infected sample.zip` — extracts inside the container (never on host), selects the largest file, and runs the full pipeline
-- **Maldev technique detection** (`maldev-detect`): 15 operator-tier techniques (PEB walking, ROR13/FNV-1a hashing, Process Hollowing, Early Bird APC, Direct Syscalls, Reflective DLL, inline AES, etc.) with ATT&CK mapping. `scan-binary` mode runs in 5 seconds without Ghidra.
+- **Maldev technique detection** (`maldev-detect`): 18 operator-tier techniques (PEB walking, ROR13/FNV-1a hashing, Process Hollowing, Early Bird APC, Direct Syscalls, Reflective DLL, inline AES, VM detection hardware/software fingerprint, time-based evasion, etc.) with ATT&CK mapping. `scan-binary` mode runs in 5 seconds without Ghidra.
+- **Anti-VM binary patcher** (`binary_patcher.py`): Patches VM-detection strings in malware binaries (VMware drivers, CPUID vendor IDs, MAC prefixes) to bypass sandbox evasion. Supports `--auto-vm` (auto-detect known patterns), `--patch-string` (find/replace), and `--patch` (hex offset). Runs inside Docker container only.
+- **Re-encryption** (`ghidra.sh encrypt`): Re-encrypts patched binaries back to `.enc.gz` quarantine format for safe VM transfer
 - Full binary analysis (info, imports, exports, strings, functions, xrefs, decompile)
 - .NET binary decompilation via ILSpy CLI (dotnet-decompile, dotnet-metadata, dotnet-types) — backed by a separate `dotnet-decompiler` image shared between containers
 - PE Triage (Phase 0) with packer detection and entropy analysis
@@ -196,14 +198,15 @@ Docker-based Ghidra automation:
 - Malware classification (InfoStealer, Ransomware, RAT, Dropper, Loader, Worm)
 - Analyzer + Reviewer agent team for quality-assured analysis sessions
 - Kali Linux container with radare2 for quick triage, entropy analysis, crypto detection, and binary diffing
-- Helper scripts: `lnk-parser.py` (LNK triage), `pe-encrypt.py` (.enc.gz generator for VM transfer), `chunk-extract.py` (.rdata embedded binary extraction), `pe_fallback_extract.py` (Ghidra-independent strings/imports for IOC pipeline)
+- **Go binary analysis**: Specialized workflow for Go-compiled malware (gopclntab-aware string extraction, module/symbol analysis). Go binaries have minimal PE imports but rich embedded strings recoverable via raw extraction
+- Helper scripts: `lnk-parser.py` (LNK triage), `pe-encrypt.py` (.enc.gz generator for VM transfer), `chunk-extract.py` (.rdata embedded binary extraction), `pe_fallback_extract.py` (Ghidra-independent strings/imports for IOC pipeline), `binary_patcher.py` (anti-VM string neutralization)
 - Scripts volume-mounted for instant hot-reload (no Docker rebuild needed for script edits)
 - Automatic command logging — every `ghidra.sh` invocation appends to `tools/ghidra-headless/logs/YYYYMMDD_<target>.md`; review with `ghidra.sh log-show <binary>`
 
 ### malware-sandbox
 
 VMware Workstation VM automation:
-- One-command `analyze` workflow that auto-handles snapshot revert, Host-Only network isolation, malware copy, pre/post snapshots, HollowsHunter scan, and final revert (no manual `start` / `net-isolate` needed)
+- One-command `analyze` workflow that auto-handles snapshot revert, Host-Only network isolation, malware copy, pre/post snapshots, HollowsHunter scan, and final revert (no manual `start` / `net-isolate` needed). `--anti-vm` flag auto-applies VMX hardening (CPUID/SMBIOS/MAC spoofing) before VM start
 - 3-Level Unpacking System (memdump-racer → TinyTracer → x64dbg)
 - Frida DBI with anti-debug bypass and memory dumping (with preflight check for guest Frida install)
 - DispatchLogger COM monitoring for script-based malware (VBS, JS, HTA, PowerShell, Office macros)

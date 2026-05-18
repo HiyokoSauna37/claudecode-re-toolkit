@@ -156,8 +156,17 @@ def is_c_runtime_line(line: str) -> bool:
     return any(crt in lower for crt in C_RUNTIME_STRINGS)
 
 
+def refang(text: str) -> str:
+    """Reverse common defang markers (hxxp, [.], [:]) so IOCs match patterns."""
+    return (text.replace('hxxps', 'https')
+                .replace('hxxp', 'http')
+                .replace('[.]', '.')
+                .replace('[:]', ':'))
+
+
 def extract_iocs(text: str) -> dict:
     """Extract all IOC types from text, with dedup and false positive filtering."""
+    text = refang(text)
     # Pre-compute C runtime lines to skip (these produce domain/email false positives)
     crt_ranges = set()
     for i, line in enumerate(text.splitlines()):

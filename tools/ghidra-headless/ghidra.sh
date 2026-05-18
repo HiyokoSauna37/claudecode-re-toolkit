@@ -418,6 +418,40 @@ case "${1:-}" in
         [ $? -eq 0 ] && echo "=== Decrypted file in container: $DECRYPTED ==="
         ;;
 
+    encrypt)
+        [ -z "$2" ] && { echo "Usage: ghidra.sh encrypt <container_path>  (re-encrypt to .enc.gz)"; exit 1; }
+        ensure_running
+        CONTAINER_FILE="$2"
+        BASENAME=$(basename "$CONTAINER_FILE")
+        ENC_GZ_NAME="${BASENAME}.enc.gz"
+        ENC_GZ_CONTAINER="/tmp/${ENC_GZ_NAME}"
+        echo "[*] Encrypting $CONTAINER_FILE -> $ENC_GZ_NAME"
+        dexec "$CONTAINER" python3 -c "
+import hashlib, gzip, os
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.primitives import padding
+from cryptography.hazmat.backends import default_backend
+password = os.environ.get('QUARANTINE_PASSWORD', '')
+if not password:
+    print('ERROR: QUARANTINE_PASSWORD not set'); exit(1)
+key = hashlib.sha256(password.encode()).digest()
+data = open('$CONTAINER_FILE', 'rb').read()
+iv = os.urandom(16)
+padder = padding.PKCS7(128).padder()
+padded = padder.update(data) + padder.finalize()
+cipher = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
+encrypted = cipher.encryptor().update(padded) + cipher.encryptor().finalize()
+with gzip.open('$ENC_GZ_CONTAINER', 'wb') as gz:
+    gz.write(iv + encrypted)
+print(f'[OK] Encrypted: $ENC_GZ_CONTAINER ({os.path.getsize(\"$ENC_GZ_CONTAINER\")} bytes)')
+print(f'[OK] Original SHA256: {hashlib.sha256(data).hexdigest()}')
+"
+        HOST_OUTPUT="$OUTPUT_DIR/$ENC_GZ_NAME"
+        docker cp "$CONTAINER:$ENC_GZ_CONTAINER" "$HOST_OUTPUT" 2>/dev/null && \
+            echo "[OK] Copied to host: $HOST_OUTPUT" || \
+            echo "[*] Encrypted file in container: $ENC_GZ_CONTAINER"
+        ;;
+
     # --- Host-side post-analysis ---
     yara-scan)
         # Usage:
@@ -728,9 +762,44 @@ MDT_HELP
         PIPELINE_ERRORS=()
 
         echo "[0/7] PE Triage..."
-        if ! python3 "$SCRIPT_DIR_WIN/pe_triage.py" "$HOST_BINARY" --output-dir "$SCRIPT_DIR_WIN/output" 2>&1; then
+        _triage_output=$(python3 "$SCRIPT_DIR_WIN/pe_triage.py" "$HOST_BINARY" --json --output-dir "$SCRIPT_DIR_WIN/output" 2>&1)
+        _triage_exit=$?
+        if [ $_triage_exit -ne 0 ]; then
             echo "[!] PE Triage failed (non-critical, continuing)" >&2
             PIPELINE_ERRORS+=("PE-Triage")
+        else
+            echo "$_triage_output" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('verdict',[''])[0])" 2>/dev/null | read -r _verdict || true
+        fi
+
+        # MSI detected: extract and analyze embedded PEs individually
+        if echo "$_triage_output" | grep -q '"MSI_INSTALLER"' 2>/dev/null; then
+            echo "[*] MSI installer detected — extracting embedded PEs..." >&2
+            dexec "$CONTAINER" mkdir -p /tmp/msi_extracted
+            dexec "$CONTAINER" sh -c "cd /tmp/msi_extracted && 7z x '$PIPELINE_BINARY' -y" >/dev/null 2>&1
+            # Find all PE files inside
+            _pe_list=$(dexec "$CONTAINER" sh -c "cd /tmp/msi_extracted && file * 2>/dev/null | grep -i 'PE32\|executable' | cut -d: -f1" 2>/dev/null)
+            if [ -n "$_pe_list" ]; then
+                echo "[*] Found PEs in MSI: $_pe_list" >&2
+                # Select the largest PE as main analysis target
+                _largest=$(dexec "$CONTAINER" sh -c "cd /tmp/msi_extracted && ls -lS $_pe_list 2>/dev/null | head -1 | awk '{print \$NF}'" 2>/dev/null)
+                if [ -n "$_largest" ]; then
+                    PIPELINE_BINARY="/tmp/msi_extracted/$_largest"
+                    BINARY_NAME=$(echo "$_largest" | sed 's/\.[^.]*$//')
+                    echo "[*] MSI primary target: $_largest" >&2
+                    # Copy to host temp for host-side tools (YARA/CAPA)
+                    docker cp "$CONTAINER:$PIPELINE_BINARY" "$PIPELINE_TMPDIR/$_largest" 2>/dev/null || true
+                    HOST_BINARY="$PIPELINE_TMPDIR/$_largest"
+                    # Run YARA on ALL extracted PEs
+                    echo "[*] Running YARA on all MSI-embedded PEs..." >&2
+                    for _pe in $_pe_list; do
+                        _yara_out=$(dexec "$CONTAINER" python3 /opt/ghidra-scripts/yara_scanner.py "/tmp/msi_extracted/$_pe" 2>/dev/null | grep -v '^$' | head -3)
+                        [ -n "$_yara_out" ] && echo "  YARA [$_pe]: $_yara_out" >&2
+                    done
+                fi
+            else
+                echo "[!] No PE files found in MSI extraction" >&2
+                PIPELINE_ERRORS+=("MSI-NoPE")
+            fi
         fi
 
         echo "[1/7] FLOSS Obfuscated String Analysis..."

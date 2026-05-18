@@ -78,9 +78,11 @@ tools/ghidra-headless/input/*
 tools/malware-sandbox/input/*
 !tools/malware-sandbox/input/.gitkeep
 
-# YARA rules (downloaded, not committed)
+# YARA rules (downloaded, not committed) — except curated custom/
 tools/ghidra-headless/yara-rules/*
 !tools/ghidra-headless/yara-rules/.gitkeep
+!tools/ghidra-headless/yara-rules/custom/
+!tools/ghidra-headless/yara-rules/custom/**
 
 # OS
 Thumbs.db

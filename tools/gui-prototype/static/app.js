@@ -1938,14 +1938,6 @@ function syncTweaksTheme(theme) {
   });
 }
 
-function syncTweaksDensity(density) {
-  document.querySelectorAll("#tw-density button").forEach(b => {
-    const on = b.dataset.v === density;
-    b.classList.toggle("on", on);
-    b.setAttribute("aria-checked", on ? "true" : "false");
-  });
-}
-
 function setupTweaksPanel() {
   const toggle = document.getElementById("tweaks-toggle");
   const panel = document.getElementById("tweaks-panel");
@@ -1954,20 +1946,6 @@ function setupTweaksPanel() {
 
   toggle.addEventListener("click", () => panel.classList.toggle("open"));
   if (closeBtn) closeBtn.addEventListener("click", () => panel.classList.remove("open"));
-
-  // Density: readable (default) / compact (12px baseline)
-  const savedDensity = localStorage.getItem("mat_density") || "readable";
-  document.body.classList.toggle("compact", savedDensity === "compact");
-  syncTweaksDensity(savedDensity);
-
-  document.querySelectorAll("#tw-density button").forEach(b => {
-    b.addEventListener("click", () => {
-      const v = b.dataset.v;
-      document.body.classList.toggle("compact", v === "compact");
-      localStorage.setItem("mat_density", v);
-      syncTweaksDensity(v);
-    });
-  });
 
   // Theme: keep in sync with cycleTheme/header button
   const currentTheme = document.documentElement.getAttribute("data-theme") || "forensic";
