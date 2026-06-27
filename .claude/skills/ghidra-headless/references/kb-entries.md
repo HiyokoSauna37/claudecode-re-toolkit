@@ -694,3 +694,46 @@ python3 ioc_extractor.py "$ioc_target" ...
 ```
 
 `classify` も同様の処理を追加。これによりユーザはフルパス（`.enc.gz` 込み）でも binary name 単独でも同じように呼べる。
+
+## KB-24: x64シェルコード（raw binary blob）の解析（2026-06-27追加）
+
+PE ヘッダを持たない生のシェルコード（position-independent code）を Ghidra で解析する場合、通常の `analyze` / `decompile` は "No load spec found" エラーで失敗する。
+
+### 解析方法
+
+**`--raw-x64` フラグ（推奨）:**
+```bash
+bash tools/ghidra-headless/ghidra.sh decompile --raw-x64 /tmp/shellcode.bin
+bash tools/ghidra-headless/ghidra.sh analyze --raw-x64 /tmp/shellcode.bin
+```
+
+**直接 analyzeHeadless 実行（フォールバック）:**
+```bash
+docker exec ghidra-headless bash -c '
+/opt/ghidra/support/analyzeHeadless /analysis/projects shellcode_project \
+  -import /tmp/shellcode.bin \
+  -processor "x86:LE:64:default" \
+  -loader BinaryLoader \
+  -loader-baseAddr 0x0 \
+  -postScript /opt/ghidra-scripts/decompile_all.py \
+  -scriptPath /opt/ghidra-scripts \
+  -deleteProject
+'
+```
+
+### シェルコードの特徴
+
+- **先頭バイト**: `48 81 EC XX XX XX XX` (`sub rsp, <imm32>`) — 典型的なx64シェルコードプロローグ
+- **PEB ウォーキング**: `65 48 8B 04 25 60 00 00 00` (`mov rax, gs:[0x60]`) → PEB取得
+- **API ハッシュ解決**: 関数名がインポートテーブルに出現せず、エクスポートテーブルのハッシュ走査で動的解決
+- **位置独立コード**: 全アドレス参照が RIP-relative
+
+### 注意事項
+
+- シェルコードの関数境界は Ghidra が自動検出できないことが多い。`decompile_all.py` のエラー数が多くなるのは正常
+- デコンパイル出力で `DAT_XXXXX` 参照がデータセクション（通常 0x30000 以降）のAPI名文字列やC2 URLを指すことが多い
+- `strings` コマンドの結果とデコンパイル出力を照合して、API名・URL・設定値を特定する
+
+### 事例
+
+- `ds.100` (347KB, DeepSeek偽インストーラー Stage 2): 1246関数をデコンパイル成功。Baidu接続確認、zh-CNロケールチェック、WinHTTP C2通信のコードフローを特定。詳細: `reports/20260627_ai-deepseeqk_deepseek-fake-installer.md`

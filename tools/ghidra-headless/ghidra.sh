@@ -32,6 +32,8 @@ ENV_FILE="$REPO_ROOT/.env"
 
 # Processor/language override (e.g., "ARM:LE:32:v8T", "x86:LE:64:default")
 PROCESSOR_ID=""
+# Raw binary mode (no PE header — shellcode/blob): uses BinaryLoader
+RAW_BINARY=0
 
 # Standard script sets
 ALL_SCRIPTS=(binary_info.py list_functions.py list_imports.py list_exports.py extract_strings.py decompile_all.py xrefs_report.py)
@@ -218,6 +220,11 @@ run_headless() {
         echo "[*] Using processor: $PROCESSOR_ID" >&2
     }
 
+    [ "$RAW_BINARY" -eq 1 ] && {
+        cmd+=(-loader BinaryLoader -loader-baseAddr 0x0)
+        echo "[*] Raw binary mode: BinaryLoader @ base 0x0" >&2
+    }
+
     for s in "${scripts[@]}"; do
         cmd+=(-postScript "$s")
     done
@@ -375,6 +382,8 @@ case "${1:-}" in
         while [ $# -gt 1 ]; do
             case "$2" in
                 --processor) PROCESSOR_ID="$3"; shift 2 ;;
+                --raw-x64) PROCESSOR_ID="x86:LE:64:default"; RAW_BINARY=1; shift ;;
+                --raw-x86) PROCESSOR_ID="x86:LE:32:default"; RAW_BINARY=1; shift ;;
                 *) ANALYZE_TARGET="$2"; shift; break ;;
             esac
         done
@@ -383,34 +392,30 @@ case "${1:-}" in
         run_ghidra_scripts "$ANALYZE_TARGET" "${ALL_SCRIPTS[@]}"
         echo "=== Results in: $SCRIPT_DIR_WIN/output/ ==="
         ;;
-    info)
-        [ -z "$2" ] && { echo "Usage: ghidra.sh info <binary>"; exit 1; }
-        run_ghidra_scripts "$2" binary_info.py
+    info|decompile|functions|strings|imports|exports|xrefs)
+        local subcmd="$1"
+        shift
+        # Parse optional --raw-x64 / --raw-x86 / --processor flags
+        local target=""
+        while [ $# -gt 0 ]; do
+            case "$1" in
+                --raw-x64) PROCESSOR_ID="x86:LE:64:default"; RAW_BINARY=1; shift ;;
+                --raw-x86) PROCESSOR_ID="x86:LE:32:default"; RAW_BINARY=1; shift ;;
+                --processor) PROCESSOR_ID="$2"; shift 2 ;;
+                *) target="$1"; shift; break ;;
+            esac
+        done
+        [ -z "$target" ] && { echo "Usage: ghidra.sh $subcmd [--raw-x64|--raw-x86|--processor ID] <binary>"; exit 1; }
+        local script_map="info:binary_info.py decompile:decompile_all.py functions:list_functions.py strings:extract_strings.py imports:list_imports.py exports:list_exports.py xrefs:xrefs_report.py"
+        local script=""
+        for entry in $script_map; do
+            local key="${entry%%:*}"
+            local val="${entry#*:}"
+            [ "$key" = "$subcmd" ] && script="$val"
+        done
+        run_ghidra_scripts "$target" "$script"
         ;;
-    decompile)
-        [ -z "$2" ] && { echo "Usage: ghidra.sh decompile <binary>"; exit 1; }
-        run_ghidra_scripts "$2" decompile_all.py
-        ;;
-    functions)
-        [ -z "$2" ] && { echo "Usage: ghidra.sh functions <binary>"; exit 1; }
-        run_ghidra_scripts "$2" list_functions.py
-        ;;
-    strings)
-        [ -z "$2" ] && { echo "Usage: ghidra.sh strings <binary>"; exit 1; }
-        run_ghidra_scripts "$2" extract_strings.py
-        ;;
-    imports)
-        [ -z "$2" ] && { echo "Usage: ghidra.sh imports <binary>"; exit 1; }
-        run_ghidra_scripts "$2" list_imports.py
-        ;;
-    exports)
-        [ -z "$2" ] && { echo "Usage: ghidra.sh exports <binary>"; exit 1; }
-        run_ghidra_scripts "$2" list_exports.py
-        ;;
-    xrefs)
-        [ -z "$2" ] && { echo "Usage: ghidra.sh xrefs <binary>"; exit 1; }
-        run_ghidra_scripts "$2" xrefs_report.py
-        ;;
+    # xrefs) is handled by the unified info|decompile|...|xrefs) case above
     decrypt)
         [ -z "$2" ] && { echo "Usage: ghidra.sh decrypt <encrypted_file.enc.gz>"; exit 1; }
         ensure_running
@@ -1066,14 +1071,20 @@ Container Management:
   status                          Show container status
 
 Ghidra Analysis (Docker container):
-  analyze [--processor ID] <bin>  Full analysis (all 7 scripts)
-  info <binary>                   Architecture, sections, entry point
-  decompile <binary>              Decompile all functions to C
-  functions <binary>              List functions with addresses/sizes
-  strings <binary>                Extract strings with xrefs
-  imports <binary>                Import table (suspicious API flagged)
-  exports <binary>                Export table
-  xrefs <binary>                  Cross-reference report
+  analyze [flags] <binary>        Full analysis (all 7 scripts)
+  info [flags] <binary>           Architecture, sections, entry point
+  decompile [flags] <binary>      Decompile all functions to C
+  functions [flags] <binary>      List functions with addresses/sizes
+  strings [flags] <binary>        Extract strings with xrefs
+  imports [flags] <binary>        Import table (suspicious API flagged)
+  exports [flags] <binary>        Export table
+  xrefs [flags] <binary>          Cross-reference report
+
+  [flags] for all Ghidra commands:
+    --raw-x64                     Raw x64 shellcode/blob (no PE header)
+    --raw-x86                     Raw x86 shellcode/blob (no PE header)
+    --processor <lang_id>         Custom processor (e.g., ARM:LE:32:v8T)
+  Example: ghidra.sh decompile --raw-x64 shellcode.bin
 
 Post-Analysis (host-side):
   pe-triage <binary>              PE Triage (pefile + DiE CLI)
