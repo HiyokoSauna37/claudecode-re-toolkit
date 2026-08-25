@@ -292,7 +292,54 @@ C2サーバーは404を返す（OSSバケットにそのパスは存在しない
 - MSIの `ProductName`: `DeepSeekV20.66`
 - インストール先: `C:\Program Files (x86)\DeepSeekV20.66\` -- 正規アプリのような体裁
 - NSISインストーラーのUI: 中国語/英語の言語リソース、「同意して続行」ダイアログ
-- `Xshell-8.0.0057p.exe` -- 正規Xshell Remote Clientの名を騙るファイルも配置
+
+### Program Files側: `Xshell-8.0.0057p.exe` の正体 -- 二重感染設計
+
+MSI内の `Binary.SetupAPP3.exe` が `C:\Program Files (x86)\DeepSeekV20.66\DeepSeekV20.66\Xshell-8.0.0057p.exe` として配置される。正規のXshell Remote Clientを名乗っているが、**実態は.NETトロイの木馬**（VT 34/75、Trojan.Yogi/Injuke）であり、Xshellとは一切関係がない。
+
+> **SHA256**: `d5d5659d070195a51bc2bf3c364e80efdce8e2b80beb02861855e261c4e065d1`
+> **VT**: [34/75](https://www.virustotal.com/gui/file/d5d5659d070195a51bc2bf3c364e80efdce8e2b80beb02861855e261c4e065d1) | **PDB**: `C:\uninstall\bin\Release\net10.0\win-x64\native\Uninstall.pdb`（.NET 10 AOTコンパイル）
+
+このバイナリは `aipackagechainer`（AppData側）とは**独立して動作する第二の感染経路**であり、以下の挙動を示す:
+
+**1. 同一C2と通信**
+
+AppData側の `aipackagechainer` と同じC2（`steyyy888.oss-cn-hongkong.aliyuncs.com/zh/`）に接続し、同じ4つのペイロード（`ds.100`, `ds.bin`, `1.1x1`, `1.d00`）をダウンロードする。C2インフラを共有する冗長設計。
+
+**2. 大量の偽Windowsファイルをドロップ**
+
+`%LOCALAPPDATA%\Programs\_XXXXXXXXX\ar-SA\` 配下に `fed` プレフィクス付きの偽Windowsファイルを20個以上展開:
+
+| ドロップされるファイル | 偽装対象の正規Windowsファイル |
+|---|---|
+| `fedtaskeng.exe` | `taskeng.exe`（タスクスケジューラエンジン） |
+| `fedOptionalFeatures.exe` | `OptionalFeatures.exe`（Windows機能管理） |
+| `fedSnippingTool.exe` | `SnippingTool.exe`（画面キャプチャ） |
+| `fedmsdt.exe` | `msdt.exe`（Microsoft Support Diagnostic Tool） |
+| `fedGettingStarted.exe` | `GettingStarted.exe`（Windowsセットアップ） |
+| `fedxpsrchvw.exe` | `xpsrchvw.exe`（XPSビューア） |
+| `fedfdBth.dll`, `fedtapi32.dll`, `fednewdev.dll` 等 | 各種Windowsシステムコンポーネント |
+
+正規Windowsファイル名に `fed` を付与して大量にばら撒くことで、プロセスリストやファイルスキャンで個々のファイルが目立たないようにカモフラージュしている。
+
+**3. プロキシ設定改ざん + GoProxy証明書のインストール**
+
+レジストリの `ProxyEnable = 1`, `ProxyServer = %HTTP_PROXY%:8080` を設定し、GoProxy（Go製のMITMプロキシ）のルート証明書をWindowsの証明書ストアにインストールする。これにより**ブラウザを含む全てのHTTPS通信を中間者攻撃できる状態**になる。
+
+```
+HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings\ProxyEnable = 1
+HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings\ProxyServer = %HTTP_PROXY%:8080
+HKCU\Software\Microsoft\SystemCertificates\Root\Certificates\0174E68C... → GoProxy CA証明書
+```
+
+**4. 二重感染の設計意図**
+
+Program Files側（`Xshell-8.0.0057p.exe`）とAppData側（`aipackagechainer`）は**独立して同じC2と通信する冗長構成**である。片方が駆除されてももう片方が生き残る設計の可能性が高い。さらに、Program Files側はプロキシ改ざん+証明書インストールという**AppData側にはない追加機能**を持っており、単なるバックアップではなく機能的に分担している:
+
+| 経路 | 配置先 | 役割 |
+|---|---|---|
+| AppData側 | `%AppData%\Roaming\DeepSeekV20.66\` | マルウェアチェイナー + 偽DeepSeekアプリ + C2ペイロードDL |
+| Program Files側 | `C:\Program Files (x86)\DeepSeekV20.66\` | 同一C2ペイロードDL + **プロキシ改ざん + GoProxy CA証明書** + 偽Windowsファイル大量ドロップ |
 
 ### 永続化
 
@@ -419,6 +466,7 @@ rule DeepSeek_Fake_Installer_XOR_Loader
 | DeepSeekV20.66-Setup.zip | `89cc8cf9bd358b3ece9e2c1d67459b494e77f3d534ec346dd9cfbfbafdd67d22` (MD5: `60fa87fe7b0b8dcbff9473f4d41e4d53`, SHA1: `7bc276e769db09c71e6ab177db838ec9281c486d`) | 9/75 |
 | DeepSeekV20.66-Setup.msi | `e16b256d28ff34557c6ad975004ae2c392f66f65f1344780e69b6204dae97c0c` | 9/75 |
 | NSIS installer | `f35c08fae77bcc13fdaa940fea21446fb78444fc2c6232abf4a2dd2d8890971a` | 1/75 |
+| SetupAPP3.exe (偽Xshell) | `d5d5659d070195a51bc2bf3c364e80efdce8e2b80beb02861855e261c4e065d1` | 34/75 |
 | ds.100 (shellcode) | `b18f12098b66bd0f7b7ac7da73d9a7f757ff8b3d2754a7c08015cacc2adbe5dd` | - |
 | ds.bin (shellcode) | `4cb8a54db1b71a95ebf4953ec91a288ef1d004b6dd6fe6811dac2e636e4d3d67` | 8/74 |
 | 1.1x1 (SPDDUMP.EXE) | `9a09faa9fa833f1810094c1a71e43217ff82e4861e3c63cea7670434b8d8229d` | 0/74 |
@@ -434,6 +482,10 @@ rule DeepSeek_Fake_Installer_XOR_Loader
 | Scheduled Task | `{383D6128-FE77-4F34-AD73-0A4FE372C7AE}` |
 | Process | `aipackagechainer.exe` |
 | Cleanup Script | `file_deleter.ps1` |
+| Fake Xshell | `C:\Program Files (x86)\DeepSeekV20.66\DeepSeekV20.66\Xshell-8.0.0057p.exe` |
+| Fake Windows files | `%LOCALAPPDATA%\Programs\_XXXXXXXXX\ar-SA\fed*.exe`, `fed*.dll` |
+| Proxy hijack | `HKCU\...\Internet Settings\ProxyEnable = 1`, `ProxyServer = %HTTP_PROXY%:8080` |
+| GoProxy CA cert | `HKCU\...\SystemCertificates\Root\Certificates\0174E68C...` |
 
 ---
 
@@ -457,6 +509,8 @@ rule DeepSeek_Fake_Installer_XOR_Loader
 | Discovery | System Information Discovery | T1082 | GetUserDefaultLocaleName, Baidu check |
 | Command and Control | Web Service: Bidirectional Communication | T1102.002 | Alibaba Cloud OSS (steyyy888) |
 | Command and Control | Application Layer Protocol: Web Protocols | T1071.001 | HTTPS GET/POST |
+| Collection | Man-in-the-Middle | T1557 | GoProxy CA証明書インストール + プロキシ設定改ざん (ProxyEnable=1, port 8080) |
+| Defense Evasion | Masquerading: Match Legitimate Name or Location | T1036.005 | `Xshell-8.0.0057p.exe` (偽Xshell), `fed*.exe/dll` (偽Windowsファイル) |
 | Exfiltration | Exfiltration Over C2 Channel | T1041 | URL パラメータでステータスexfil |
 
 ---
