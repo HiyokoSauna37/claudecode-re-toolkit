@@ -98,3 +98,11 @@ Thumbs.db
 
 # Local Claude Code settings (per-project state, not for sharing)
 .claude/settings.local.json
+
+# 解析セッション中の一時ファイル（リポジトリルート）
+# intel-cli.py の JSON をリダイレクトした先や、それを読む使い捨てスクリプト。
+# 解析対象ごとに中身が変わるうえ API レスポンスそのものなので、成果物ではない。
+# 出力名は都度ユーザが決めるため、新しい名前を使ったらここに足すこと。
+/bsum.json
+/mitre.json
+/tmp_*.py
