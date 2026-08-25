@@ -99,6 +99,9 @@ Thumbs.db
 # Local Claude Code settings (per-project state, not for sharing)
 .claude/settings.local.json
 
+# MCP server config (contains host-local paths)
+.mcp.json
+
 # 解析セッション中の一時ファイル（リポジトリルート）
 # intel-cli.py の JSON をリダイレクトした先や、それを読む使い捨てスクリプト。
 # 解析対象ごとに中身が変わるうえ API レスポンスそのものなので、成果物ではない。
