@@ -71,7 +71,7 @@ docker compose -f tools/ghidra-headless/docker-compose.yml up -d
 Ghidra Headless AnalyzerをDockerコンテナで実行し、バイナリの静的解析（インポート分析、文字列抽出、デコンパイル、YARA/CAPA/IOC抽出、マルウェア分類）を自動化。
 
 ### malware-sandbox
-VMware Workstation上のWindows VMをvmrun CLIで操作し、マルウェアの動的解析を実行。3-Level Unpacking System（memdump-racer / TinyTracer / x64dbg）、Frida DBI、FakeNet-NGによるC2通信キャプチャに対応。
+VMware Workstation上のWindows VMをvmrun CLIで操作し、マルウェアの動的解析を実行。3-Level Unpacking System（memdump-racer / TinyTracer / mal_unpack）、Frida DBI、FakeNet-NGによるC2通信キャプチャに対応。
 
 ### threat-intel
 17 OSINTサービス統合CLI（VirusTotal / Hybrid Analysis / Triage / MalwareBazaar / ThreatFox / OTX / URLHaus / URLScan.io / Shodan / AbuseIPDB / GreyNoise / IPInfo / BGPView / Whois/RDAP / NIST NVD / VulnCheck / Malpedia / Malshare）。`correlate-hash` / `correlate-ip` で複数サービス横断問合せ、IOC抽出（pdf/eml/url, SSRF防御）、MITRE ATT&CK マッピング、HTML/PDFレポート対応。

@@ -40,8 +40,8 @@ go version 2>/dev/null                                            # Go
 python --version 2>/dev/null                                      # Python
 ls tools/ghidra-headless/yara-rules/ 2>/dev/null                  # YARA rules
 pip show yara-python 2>/dev/null                                  # yara-python
-pip show flare-capa 2>/dev/null                                   # flare-capa
-pip show flare-floss 2>/dev/null                                  # flare-floss (FLOSS, 新機能)
+pip show flare-capa 2>/dev/null                                   # flare-capa（malware-sandbox 用。ghidra-headless はイメージ内に同梱済み）
+pip show flare-floss 2>/dev/null                                  # flare-floss（malware-sandbox 用。ghidra-headless はイメージ内に同梱済み）
 pip show dumpulator 2>/dev/null                                   # dumpulator (新機能)
 ```
 
@@ -72,7 +72,7 @@ Phase 0 の結果に基づき、未セットアップ項目をデフォルトで
 - Docker: malware-fetch イメージビルド
 - Docker: ghidra-headless コンテナ起動
 - YARA/CAPA セットアップ
-- FLOSS/dumpulator セットアップ（pip install flare-floss dumpulator）
+- FLOSS/dumpulator セットアップ（pip install flare-floss dumpulator）— **malware-sandbox 用のホスト側インストール**。ghidra-headless の capa/FLOSS は Dockerfile でピン止め済み（flare-capa 9.4.0 / flare-floss 3.1.1 + capa ルール同梱）なのでホストには不要
 - VMware Sandbox 環境構築ガイド
 
 ### Step 3: 手順実行（Phase 2）

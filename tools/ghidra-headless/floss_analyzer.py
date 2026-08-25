@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""FLOSS obfuscated string analyzer (host-side).
+"""FLOSS obfuscated string analyzer (runs inside the ghidra-headless container).
 
 Extracts strings that plain string extraction misses:
   - Stack strings   : built byte-by-byte on stack (e.g. "cmd.exe" pushed in pieces)
   - Tight-loop      : short XOR / ROT loops that produce short strings
   - Decoded strings : emulation-based extraction of longer deobfuscation routines
 
-Install:
-    pip install flare-floss
+Requires the `floss` CLI (preinstalled in the ghidra-headless image;
+standalone use: pip install flare-floss).
 
 Usage:
     python floss_analyzer.py malware.exe
@@ -50,7 +50,7 @@ MAX_FILE_SIZE_MB = 100
 def check_floss() -> None:
     if shutil.which("floss") is None:
         print(_c(R, "✗ floss not found in PATH"), file=sys.stderr)
-        print("  Install: pip install flare-floss", file=sys.stderr)
+        print("  Run via: ghidra.sh floss <binary>  (floss is preinstalled in the container)", file=sys.stderr)
         print("  Or download: https://github.com/mandiant/flare-floss/releases", file=sys.stderr)
         sys.exit(1)
 

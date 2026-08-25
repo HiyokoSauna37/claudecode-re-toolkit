@@ -146,7 +146,7 @@ cmd_scan() {
         log "Using dump-triage for VMP function detection..."
         "$dump_triage" --vmp-addrs "$binary"
     else
-        warn "dump-triage not found. Build it: cd Tools/dump-triage && go build -o dump-triage.exe ."
+        warn "dump-triage not found. Build it: cd tools/dump-triage && go build -trimpath -ldflags=\"-s -w\" -o dump-triage.exe ."
         warn "Falling back to manual section analysis..."
         ensure_container
         local container_path

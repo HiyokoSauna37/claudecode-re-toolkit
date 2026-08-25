@@ -1,0 +1,11 @@
+# Keep malware and analysis artifacts OUT of the build context.
+# Only scripts/ and decrypt_quarantine.py are COPYed into the image;
+# input/ and output/ reach the container as bind mounts (docker-compose.yml).
+input/
+output/
+projects/
+logs/
+yara-rules/
+__pycache__/
+.tmp_capa_*/
+*.enc.gz

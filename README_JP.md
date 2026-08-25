@@ -206,7 +206,7 @@ Docker ベースの Ghidra 自動解析:
 
 VMware Workstation VM 自動操作:
 - ワンコマンド `analyze` ワークフロー — スナップショット復帰、Host-Only ネットワーク隔離、マルウェア転送、pre/post 状態取得、HollowsHunter 実行、最終復帰までを自動実行（手動 `start` / `net-isolate` 不要）。`--anti-vm` フラグで VMX ハードニング（CPUID/SMBIOS/MAC 偽装）を VM 起動前に自動適用
-- 3段階アンパックシステム（memdump-racer → TinyTracer → x64dbg）
+- 3段階アンパックシステム（memdump-racer → TinyTracer → mal_unpack。最終手段として x64dbg 手順表示）
 - Frida DBI によるアンチデバッグ回避 + メモリダンプ（ゲスト内 Frida 有無の preflight チェック付き）
 - DispatchLogger COM 監視によるスクリプト系マルウェア解析（VBS、JS、HTA、PowerShell、Office マクロ）
 - FakeNet-NG 連携による C2 プロトコルキャプチャ。`fakenet_validate.py` 設定バリデータ + `build_http_response.py` レスポンスビルダーを同梱
@@ -216,7 +216,7 @@ VMware Workstation VM 自動操作:
 - **`vm-detect-checker.exe`** — VM 内で実行し、VMProtect/Themida 等が見るハード的指紋（SMBIOS、ACPI、MAC OUI）を列挙
 - pre/post レジストリ差分は `regshot_diff.py`
 - ネットワーク隔離管理
-- 包括的なゲスト内ツール群（x64dbg、PE-sieve、HollowsHunter 等）
+- 包括的なゲスト内ツール群（x64dbg、PE-sieve、HollowsHunter、mal_unpack 等）
 - VM 内での `.enc.gz` quarantine ファイル自動復号（ホスト上に生マルウェアを一切展開しない）
 - BOM 無し UTF-8 スクリプト転送 + 常駐ツール向け `Start-Process` パターンで vmrun ハングを回避
 
@@ -227,6 +227,25 @@ VMware Workstation VM 自動操作:
 - **`tools/quarantine/quarantine.exe`** — Quarantine ブラウザ CLI: `quarantine list` / `info <#|domain>` / `analyze <#|domain>`（復号 + ghidra `analyze-full` を1コマンドで実行）。malware-fetch が捕獲した検体を `.enc.gz` を意識せず一覧・解析できる
 - **`tools/mergen/mergen.sh`** — VMProtect デバーチャライゼーション（LLVM IR リフティング）。動的アンパックでは到達できない保護関数を LLVM IR に持ち上げて可読化する
 - **`tools/dotnet-decompiler/`** — ILSpy CLI Docker イメージ。`ghidra.sh dotnet-decompile` から自動利用されるが、.NET バッチワークフロー用に直接呼び出すことも可能
+
+## クレジット
+
+本ツールキットは優れたサードパーティツールを組み合わせて動作しています。功績は各作者のものです。
+
+**ゲスト内解析ツール**
+- [pe-sieve](https://github.com/hasherezade/pe-sieve) / [hollows_hunter](https://github.com/hasherezade/hollows_hunter) / [mal_unpack](https://github.com/hasherezade/mal_unpack) / [tiny_tracer](https://github.com/hasherezade/tiny_tracer) — hasherezade 氏（BSD-2-Clause）
+- [x64dbg](https://github.com/x64dbg/x64dbg)（GPL-3.0）、[ScyllaHide](https://github.com/x64dbg/ScyllaHide)
+- [Frida](https://frida.re/)、[FakeNet-NG](https://github.com/mandiant/flare-fakenet-ng)（Apache-2.0）
+- [Sysinternals Process Monitor](https://learn.microsoft.com/sysinternals/downloads/procmon)
+
+**静的解析**
+- [Ghidra](https://github.com/NationalSecurityAgency/ghidra) — NSA（Apache-2.0）
+- [capa](https://github.com/mandiant/capa) / [FLOSS](https://github.com/mandiant/flare-floss) — Mandiant（Apache-2.0）
+- [YARA](https://github.com/VirusTotal/yara)（BSD-3-Clause）、[signature-base](https://github.com/Neo23x0/signature-base)、[YARA Forge](https://github.com/YARAHQ/yara-forge)
+
+**脅威インテリジェンス** — VirusTotal / Hybrid Analysis / Triage / abuse.ch（MalwareBazaar・ThreatFox・URLHaus）/ AlienVault OTX / URLScan.io / Shodan / AbuseIPDB / GreyNoise / IPInfo / BGPView / NIST NVD / VulnCheck / Malpedia / Malshare
+
+**本ツールキットの設計に影響を与えた情報提供** — [@duty_1g](https://x.com/duty_1g)（x64dbg MCP エコシステム）、[@PINKSAWTOOTH](https://x.com/PINKSAWTOOTH)（Ghidra が Darius Houle 氏の [x64dbg-automate](https://github.com/dariushoule/x64dbg-automate) を採用している点の指摘）、[@MalwareBibleJP](https://x.com/MalwareBibleJP)（PE-sieve）。評価の詳細は [docs/20260824_x64dbg-mcp-evaluation.md](docs/20260824_x64dbg-mcp-evaluation.md)。
 
 ## ライセンス
 

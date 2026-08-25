@@ -29,12 +29,11 @@ bash tools/ghidra-headless/ghidra.sh status    # 状態確認
 
 ### PE トリアージ（Phase 0）
 ```bash
-python tools/ghidra-headless/pe_triage.py <binary>                            # ホスト側トリアージ（通常PE用、高速）
-python tools/ghidra-headless/pe_triage.py <binary> --json                     # JSON出力
-bash tools/ghidra-headless/ghidra.sh pe-triage <binary|file.enc.gz>           # .enc.gz対応版（復号が必要な場合のみ）
+bash tools/ghidra-headless/ghidra.sh pe-triage <binary|file.enc.gz>           # 入力種別を問わずこれ一本
+bash tools/ghidra-headless/ghidra.sh pe-triage --in-container <container-path> # コンテナ内パスを直接指定
 ```
 
-**使い分け:** 通常 PE → `pe_triage.py`（ホスト直接、高速）。`.enc.gz` → `ghidra.sh pe-triage`（自動復号付き）。`analyze-full` を使う場合は Phase 0 が内包されるので事前単独実行は不要（戦略判断を先にしたい場合のみ単独で打つ）。
+**入口は `ghidra.sh pe-triage` に一本化されている**（ホスト側 `python pe_triage.py` を直接叩かないこと）。通常 PE / `.enc.gz` / zip / コンテナ内パスのいずれもコンテナ内で処理され、ホストに平文検体は出ない。`analyze-full` を使う場合は Phase 0 が内包されるので事前単独実行は不要（戦略判断を先にしたい場合のみ単独で打つ）。
 
 | Verdict | 意味 | 次アクション |
 |---|---|---|
@@ -118,12 +117,12 @@ bash tools/ghidra-headless/ghidra.sh output grep "connect" sample_strings.txt
 ## analyze-full パイプライン
 
 ```
-Phase 0: PE Triage（ホスト、数秒）→ Verdict で戦略調整
-Phase 1: FLOSS（ホスト）→ stack strings / decoded strings 抽出（XOR/難読化解除）
+Phase 0: PE Triage（コンテナ内、数秒）→ Verdict で戦略調整
+Phase 1: FLOSS（コンテナ内）→ stack strings / decoded strings 抽出（XOR/難読化解除）
 Phase 2: Binary Visualization（コンテナ内）→ エントロピープロファイル + bigram PNG
 Phase 2b: Office Document（自動検出時のみ）→ oletools: VBA macro / auto-exec 分析
 Phase 3: YARA Scan（コンテナ内）
-Phase 4: CAPA Analysis（ホスト）
+Phase 4: CAPA Analysis（コンテナ内）
 Phase 5: Ghidra Analysis（コンテナ内、デコンパイル含む）
 Phase 6: IOC Extraction（ホスト、Ghidra 出力をパース）
 Phase 7: Malware Classification（ホスト、IOC + 文字列から分類）
@@ -145,7 +144,7 @@ Phase 7: Malware Classification（ホスト、IOC + 文字列から分類）
 
 **analyze-full 中の PACKER_DETECTED 挙動**: パイプラインに自動中断ロジックは無く、PACKER_DETECTED が出ても Phase 1〜5（YARA / CAPA / Ghidra / IOC / 分類）は **すべて完走する**（各ステップは "non-critical, continuing" で続行）。Phase 0 の `<binary>_triage.json` を読んで `verdict == PACKER_DETECTED:*` の場合、**ユーザー側で** Phase 1 以降の出力を見て ROI 低と判断したら malware-sandbox に切り替える。
 
-YARA/CAPA は Docker 不要・Ghidra と独立。先に完了したら即ユーザーへ **中間報告** すること:
+YARA/CAPA は Ghidra 解析とは独立（いずれもコンテナ内実行）。先に完了したら即ユーザーへ **中間報告** すること:
 - YARA 完了 → ファミリ名・ルール一致数を報告
 - CAPA 完了 → 主要 ATT&CK TTP（Top 5-10）を報告
 - Ghidra 完了後 → IOC / 分類と統合して最終レポートへ
@@ -178,7 +177,7 @@ docker compose -f tools/dotnet-decompiler/docker-compose.yml up -d --build
 **Docker image はホスト全体 (daemon 単位) で共有される** — 別 repo (例: life repo) で同じ basename `dotnet-decompiler/` から既にビルド済みなら image (`dotnet-decompiler-dotnet-decompiler:latest`) を再利用できるので Step 2 はスキップ可。先に `tools/dotnet-decompiler/dotnet-decompile.exe preflight` を打って Docker daemon / Container / ilspycmd / QUARANTINE_PASSWORD が全 OK ならビルド不要。
 
 稼働確認: `tools/dotnet-decompiler/dotnet-decompile.exe preflight`（停止中なら `dotnet-decompile.exe` 自体が `ensureRunning` で自動 `up`）
-不在時のエラー: `Error: dotnet-decompile.exe not found. Build with: cd tools/dotnet-decompiler && go build -o dotnet-decompile.exe .`
+不在時のエラー: `Error: dotnet-decompile.exe not found. Build with: cd tools/dotnet-decompiler && go build -trimpath -ldflags="-s -w" -o dotnet-decompile.exe .`
 
 **.NET でも `pe-triage` / `yara-scan` / `capa` は有効**: .NET バイナリは PE ヘッダを持つので、ConfuserEx / Costura / SmartAssembly 等の .NET パッカー検出は pe-triage で可能。YARA/CAPA も .NET に対応（CAPA は `dotnet` バックエンドを使う）。
 
@@ -266,10 +265,10 @@ tools/quarantine/quarantine.exe analyze 1         # 復号+Ghidra解析
 ## セットアップ（初回のみ）
 
 ```bash
-pip install pefile yara-python                    # PE Triage + YARA
-choco install die                                 # オプション: DiEパッカー検出
-# capa: https://github.com/mandiant/capa/releases からバイナリをPATHに配置
-bash tools/ghidra-headless/ghidra.sh start        # Ghidraコンテナ初回ビルド
+# 検体に触るツール（pe-triage / yara-scan / capa / floss / pe-fallback-extract）は
+# すべてコンテナ内で動く。ホストへの pip install は不要（capa/FLOSS/YARA/pefile は
+# Dockerfile でピン止め済み: flare-capa 9.4.0 / flare-floss 3.1.1 + capa ルール同梱）
+bash tools/ghidra-headless/ghidra.sh start        # Ghidraコンテナ初回ビルド（Ghidra 12.1.3 + Jython 拡張）
 # .NET 解析を使うなら:
 cd tools/dotnet-decompiler && go build -trimpath -ldflags="-s -w" -o dotnet-decompile.exe .
 # Docker image — 別 repo で同じ basename `dotnet-decompiler/` から既にビルド済みなら image はホスト共有なのでスキップ可:
@@ -335,7 +334,7 @@ malware-fetch(バイナリ取得) / forensic-analysis(不審EXE深掘り) / memo
 - **`unzip` は AES-256 (PKv5.1) 非対応**: MalwareBazaar 配布 ZIP は AES-256 なので必ず `7z x -pinfected` を使う（コンテナに既存）
 - **`docker cp` で MSYS パス変換**: ホスト → コンテナの `/tmp/...` 指定時、`MSYS_NO_PATHCONV=1` プレフィックスを付ける
 - **Windows ドライブパス (`C:\...`) の扱い**: `bash tools/ghidra-headless/ghidra.sh <cmd> C:\malware\x.exe` のように `ghidra.sh` 経由で渡す分には内部で変換済みで問題なく通る。`docker exec` / `docker cp` に直接渡す時だけ MSYS 変換で失敗するので、出力参照は必ず `ghidra.sh output <subcmd>` を使う
-- **`yara-scan` / `capa` / `analyze` はホスト側ツール**: コンテナ内 `/tmp/` のバイナリには直接渡せない（ファイル不在エラー）。ホストファイルとして渡すか、`scripts/pe-encrypt.py` で `.enc.gz` 化してから `analyze <file.enc.gz>` を使う
+- **`yara-scan` / `capa` / `floss` / `pe-triage` / `pe-fallback-extract` はコンテナ内実行**: ホストパス・`.enc.gz`・`.zip`・コンテナ内絶対パス（`/tmp/...` `/analysis/...`）のいずれも直接渡せる。復号済みバイナリがホストに出ることはない（CLAUDE.md 準拠）
 - **`Sleep(大きな数値)` は単位要注意**: Rust の `Duration::from_nanos(800_000_000)` は 0.8 秒。静的解析で見た数値を秒単位と誤読しない。ProcMon の Process Start→Exit で実時間確認
 - **VMware 単一キー検知の典型**: `HKLM\SOFTWARE\VMware, Inc.\VMware Tools` RegOpenKey → 存在で即 exit する Rust マルウェアが多い。動的解析で 1 秒以内に exit するなら VM 検知を疑う
 

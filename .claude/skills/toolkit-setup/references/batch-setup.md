@@ -128,7 +128,7 @@ AskUserQuestion:
 以下をインストールします:
 - YARA ルール（signature-base + yara-forge）
 - yara-python（pip）
-- flare-capa（pip）+ ルール更新
+- flare-capa（pip）+ ルール更新 — malware-sandbox 用のみ。ghidra-headless はイメージ内に同梱（flare-capa 9.4.0 + capa ルール）
 実行してよろしいですか？
 ```
 

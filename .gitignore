@@ -47,6 +47,9 @@ __pycache__/
 venv/
 .venv/
 
+# Jython compiled artifacts (shadow the .py source — never commit)
+*$py.class
+
 # Quarantine (encrypted malware files)
 tools/malware-fetch/Quarantine/
 

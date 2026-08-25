@@ -12,28 +12,43 @@ Usage:
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-TOOL_VERSION = "1.0.0"
+TOOL_VERSION = "1.1.0"
 SCRIPT_DIR = Path(__file__).parent
 DEFAULT_OUTPUT_DIR = SCRIPT_DIR / "output"
+
+# capa installed from PyPI ships no embedded rules/signatures. The Ghidra
+# container bakes them in and exports these variables (see Dockerfile); when the
+# directories are absent (plain host install) we fall back to capa's own
+# defaults.
+CAPA_RULES_DIR = os.environ.get("CAPA_RULES_DIR", "/opt/capa/rules")
+CAPA_SIGS_DIR = os.environ.get("CAPA_SIGS_DIR", "/opt/capa/sigs")
 
 
 def check_capa():
     """Check if capa is installed and accessible."""
     if shutil.which("capa") is None:
-        print("Error: capa not found. Install with: pip install flare-capa", file=sys.stderr)
-        print("Then update rules: capa --update-rules", file=sys.stderr)
+        print("Error: capa not found.", file=sys.stderr)
+        print("  This script is meant to run inside the ghidra-headless container "
+              "(ghidra.sh capa <binary>), where capa is preinstalled.", file=sys.stderr)
+        print("  Standalone use: pip install flare-capa", file=sys.stderr)
         sys.exit(1)
 
 
 def run_capa(binary_path):
     """Run capa with JSON output and return parsed result."""
-    cmd = ["capa", "-j", str(binary_path)]
+    cmd = ["capa", "-j"]
+    if Path(CAPA_RULES_DIR).is_dir():
+        cmd += ["-r", CAPA_RULES_DIR]
+    if Path(CAPA_SIGS_DIR).is_dir():
+        cmd += ["-s", CAPA_SIGS_DIR]
+    cmd.append(str(binary_path))
     print(f"Running: {' '.join(cmd)}")
 
     try:

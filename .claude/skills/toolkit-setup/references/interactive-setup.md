@@ -147,7 +147,7 @@ pip show yara-python 2>/dev/null
 未インストール → AskUserQuestion で確認後 `pip install yara-python`。
 検証: `python -c "import yara; print('OK')"`
 
-### 4-3. flare-capa
+### 4-3. flare-capa（malware-sandbox 用。ghidra-headless はイメージ内に同梱済み）
 ```bash
 pip show flare-capa 2>/dev/null
 ```

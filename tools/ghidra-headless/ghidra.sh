@@ -34,6 +34,8 @@ ENV_FILE="$REPO_ROOT/.env"
 PROCESSOR_ID=""
 # Raw binary mode (no PE header — shellcode/blob): uses BinaryLoader
 RAW_BINARY=0
+# Keep the staging copy that prepare_binary drops in input/ (opt-in, --keep-input-copy)
+KEEP_INPUT_COPY=0
 
 # Standard script sets
 ALL_SCRIPTS=(binary_info.py list_functions.py list_imports.py list_exports.py extract_strings.py decompile_all.py xrefs_report.py)
@@ -76,24 +78,92 @@ with open('$container_path','rb') as f:
 
 # --- Binary resolution ---
 
+# Results of the last prepare_binary call. They are returned via globals rather
+# than stdout so that the collision notice below can never leak into a caller's
+# command substitution.
+PREPARED_CONTAINER_PATH=""   # path to hand to the container
+PREPARED_HOST_COPY=""        # host file WE created ("" = nothing of ours)
+PREPARED_STAGE_DIR=""        # host dir WE created ("" = none)
+
+# Stage a host file into input/ (bind-mounted to /analysis/input) and record the
+# container path in PREPARED_CONTAINER_PATH. The copy is transient by default:
+# resolve_binary moves it into RESOLVED_HOST_COPY / RESOLVED_STAGE_DIR and
+# cleanup_resolved deletes it, so scanning a sample no longer leaves a plaintext
+# copy inside the repo working tree.
+#
+# Collision policy: input/ may already hold a file with the same basename that
+# the user put there deliberately. It is NEVER overwritten and NEVER deleted.
+# The sample is staged into a private subdirectory input/.stage_<pid>_<ns>/
+# instead, keeping the basename intact -- Ghidra names every output file after
+# the imported program, so renaming the sample would rename all of its
+# artifacts. The whole subdirectory is removed by cleanup_resolved.
 prepare_binary() {
     local binary_path="$1"
+    PREPARED_CONTAINER_PATH=""
+    PREPARED_HOST_COPY=""
+    PREPARED_STAGE_DIR=""
     [ -z "$binary_path" ] && { echo "Error: No binary specified" >&2; return 1; }
 
-    local bname
+    local bname in_dir src_dir
     bname=$(basename "$binary_path")
+    in_dir=$(cd "$SCRIPT_DIR/input" 2>/dev/null && pwd -P) || in_dir="$SCRIPT_DIR/input"
 
-    if [ -f "$binary_path" ]; then
-        cp "$binary_path" "$SCRIPT_DIR/input/$bname"
-    elif [ ! -f "$SCRIPT_DIR/input/$bname" ]; then
+    if [ ! -f "$binary_path" ]; then
+        # Not a host file -- accept a bare name that already sits in input/.
+        if [ -f "$SCRIPT_DIR/input/$bname" ]; then
+            PREPARED_CONTAINER_PATH="/analysis/input/$bname"
+            return 0
+        fi
         echo "Error: File not found: $binary_path" >&2
         return 1
     fi
-    echo "/analysis/input/$bname"
+
+    src_dir=$(cd "$(dirname "$binary_path")" 2>/dev/null && pwd -P) || src_dir=""
+
+    # Source already lives in input/: nothing to copy (the self-copy used to
+    # print "cp: ... are the same file"), and nothing of ours to delete later.
+    if [ -n "$src_dir" ] && [ "$src_dir" = "$in_dir" ]; then
+        PREPARED_CONTAINER_PATH="/analysis/input/$bname"
+        return 0
+    fi
+
+    if [ -e "$SCRIPT_DIR/input/$bname" ]; then
+        local stage
+        stage=".stage_$$_$(date +%s%N)"
+        if ! mkdir -p "$SCRIPT_DIR/input/$stage"; then
+            echo "Error: could not create staging dir input/$stage" >&2
+            return 1
+        fi
+        if ! cp "$binary_path" "$SCRIPT_DIR/input/$stage/$bname"; then
+            rmdir "$SCRIPT_DIR/input/$stage" 2>/dev/null || true
+            echo "Error: failed to stage $binary_path" >&2
+            return 1
+        fi
+        echo "[*] input/$bname already exists - staged under input/$stage/ instead (existing file untouched)" >&2
+        PREPARED_CONTAINER_PATH="/analysis/input/$stage/$bname"
+        PREPARED_HOST_COPY="$SCRIPT_DIR/input/$stage/$bname"
+        PREPARED_STAGE_DIR="$SCRIPT_DIR/input/$stage"
+        return 0
+    fi
+
+    if ! cp "$binary_path" "$SCRIPT_DIR/input/$bname"; then
+        echo "Error: failed to stage $binary_path" >&2
+        return 1
+    fi
+    PREPARED_CONTAINER_PATH="/analysis/input/$bname"
+    PREPARED_HOST_COPY="$SCRIPT_DIR/input/$bname"
+    return 0
 }
 
 RESOLVED_BINARY=""
 NEEDS_CLEANUP=0
+# Host-side staging copy created by prepare_binary that cleanup_resolved must
+# delete (empty = nothing to delete: container path, .enc.gz, .zip, a file the
+# user deliberately put in input/, or --keep-input-copy).
+RESOLVED_HOST_COPY=""
+# Staging subdirectory input/.stage_* created on a basename collision; removed
+# together with RESOLVED_HOST_COPY.
+RESOLVED_STAGE_DIR=""
 
 ZIP_PASSWORD=""
 
@@ -147,8 +217,18 @@ resolve_binary() {
         RESOLVED_BINARY=$(decrypt_in_container "$binary_path") || { echo "Error: Decryption failed" >&2; return 1; }
         NEEDS_CLEANUP=1
     else
-        RESOLVED_BINARY=$(prepare_binary "$binary_path") || return 1
+        # prepare_binary decides what (if anything) it had to create; only what
+        # IT created is ever deleted, so a file the user put in input/ himself
+        # is neither overwritten nor removed.
+        prepare_binary "$binary_path" || return 1
+        RESOLVED_BINARY="$PREPARED_CONTAINER_PATH"
         NEEDS_CLEANUP=0
+        if [ "$KEEP_INPUT_COPY" -eq 0 ]; then
+            RESOLVED_HOST_COPY="$PREPARED_HOST_COPY"
+            RESOLVED_STAGE_DIR="$PREPARED_STAGE_DIR"
+        elif [ -n "$PREPARED_HOST_COPY" ]; then
+            echo "[*] --keep-input-copy: sample kept at ${PREPARED_HOST_COPY#"$SCRIPT_DIR/"}" >&2
+        fi
     fi
 }
 
@@ -156,8 +236,17 @@ cleanup_resolved() {
     if [ "$NEEDS_CLEANUP" -eq 1 ] && [ -n "$RESOLVED_BINARY" ]; then
         cleanup_container "$RESOLVED_BINARY"
     fi
+    if [ -n "$RESOLVED_HOST_COPY" ] && [ -f "$RESOLVED_HOST_COPY" ]; then
+        echo "[*] Removing staged copy: ${RESOLVED_HOST_COPY#"$SCRIPT_DIR/"}" >&2
+        rm -f "$RESOLVED_HOST_COPY" 2>/dev/null || true
+    fi
+    if [ -n "$RESOLVED_STAGE_DIR" ] && [ -d "$RESOLVED_STAGE_DIR" ]; then
+        rmdir "$RESOLVED_STAGE_DIR" 2>/dev/null || true
+    fi
     RESOLVED_BINARY=""
     NEEDS_CLEANUP=0
+    RESOLVED_HOST_COPY=""
+    RESOLVED_STAGE_DIR=""
 }
 trap cleanup_resolved EXIT
 
@@ -184,7 +273,9 @@ decrypt_in_container() {
         python3 /opt/ghidra-scripts/decrypt_quarantine.py "/tmp/$enc_basename" -o "/tmp/$dec_basename" >&2
     [ $? -ne 0 ] && { echo "Error: Decryption failed" >&2; return 1; }
 
-    dexec "$CONTAINER" rm -f "/tmp/$enc_basename"
+    # `docker cp` writes as root, so the ghidra user cannot unlink it from the
+    # sticky /tmp — drop the encrypted copy as root and never let it be fatal.
+    dexec -u root "$CONTAINER" rm -f "/tmp/$enc_basename" >/dev/null 2>&1 || true
     echo "/tmp/$dec_basename"
 }
 
@@ -194,6 +285,80 @@ cleanup_container() {
         echo "[*] Cleaning up decrypted file from container..."
         dexec "$CONTAINER" rm -f "$container_path"
     fi
+}
+
+# --- Per-invocation container output dirs ---
+#
+# The shared /tmp/output inside the container is never cleared, so any step that
+# later `docker cp`s its results back used to drag artifacts of unrelated earlier
+# samples into the host output/ dir. Every such step now writes into a fresh dir
+# (same convention run_container_tool already used) and removes it afterwards.
+
+mk_container_out() {
+    local tag="${1:-out}"
+    local d="/tmp/${tag}_out_$$_$(date +%s%N)"
+    dexec "$CONTAINER" mkdir -p "$d" /analysis/output >/dev/null 2>&1 || true
+    echo "$d"
+}
+
+# Publish a container output dir to /analysis/output (bind mount) and to the host
+# output/ dir, then remove it unless <keep> is 1 (steps of one analyze-full run
+# share a dir and keep it until the pipeline ends).
+publish_container_out() {
+    local d="$1"
+    local keep="${2:-0}"
+    [ -z "$d" ] && return 0
+    dexec "$CONTAINER" sh -c "cp -f '$d'/* /analysis/output/ 2>/dev/null" >/dev/null 2>&1 || true
+    mkdir -p "$SCRIPT_DIR_WIN/output"
+    docker cp "$CONTAINER:$d/." "$SCRIPT_DIR_WIN/output/" >/dev/null 2>&1 || true
+    [ "$keep" = "1" ] || dexec "$CONTAINER" rm -rf "$d" >/dev/null 2>&1 || true
+    return 0
+}
+
+# Remove a container output dir without publishing it (failed step).
+drop_container_out() {
+    [ -n "$1" ] && dexec "$CONTAINER" rm -rf "$1" >/dev/null 2>&1
+    return 0
+}
+
+# --- Output-file naming conventions -------------------------------------------
+#
+# output/ holds TWO different naming conventions and they do not agree:
+#
+#   Ghidra post-scripts (scripts/*.py -> ghidra_common.GhidraReport, which uses
+#   program.getName()) name their files after the imported program, i.e. the
+#   file name WITH its extension:
+#       sample.exe_strings.txt   sample.exe_imports.txt   sample.exe_exports.txt
+#       sample.exe_info.txt      sample.exe_functions.txt sample.exe_xrefs.txt
+#       sample.exe_decompiled.c
+#
+#   The container Python tools use pathlib Path.stem, i.e. WITHOUT the last
+#   extension:
+#       sample_triage.json  sample_floss.json  sample_viz.json
+#       sample_yara.json    sample_capa.json   sample_office.json
+#       sample_pe_strings.txt  sample_pe_imports.txt   (pe_fallback_extract.py)
+#
+# ioc_extractor.py / malware_classifier.py / maldev_techniques.py read the FIRST
+# group via ghidra_output_utils.find_ghidra_outputs(), falling back to
+# pe_fallback_extract.py's files from the second group. They must therefore be
+# handed the name that is actually on disk. The stand-alone ioc-extract /
+# classify / maldev-detect subcommands already pass the full basename;
+# analyze-full used to strip the extension, which is why every sample with an
+# extension silently produced no _iocs.json and no _classification.json.
+#
+# _have_report_inputs <name>: true when output/ holds at least one file that
+# find_ghidra_outputs() would pick up for <name>.
+_have_report_inputs() {
+    local n="$1" s
+    if [ -z "$n" ]; then return 1; fi
+    for s in _strings.txt _imports.txt _exports.txt _decompiled.c \
+             _decompiled_functions.c _info.txt _functions.txt _xrefs.txt \
+             _decrypted_strings.txt _pe_strings.txt _pe_imports.txt; do
+        if [ -f "$SCRIPT_DIR/output/${n}${s}" ]; then
+            return 0
+        fi
+    done
+    return 1
 }
 
 # --- Ghidra execution (array-based, no bash -c) ---
@@ -254,32 +419,59 @@ run_ghidra_scripts() {
     cleanup_resolved
 }
 
-# Run host-side Python tool with optional .enc.gz decryption
-# Usage: run_host_tool <binary_path> <python_script> [extra_args...]
-run_host_tool() {
+# Run a Python analysis tool INSIDE the container.
+#
+# Path policy (same rule as the pe-triage --in-container branch, KB-22):
+#   Any tool that opens the sample itself (capa / FLOSS / pe_triage /
+#   pe_fallback_extract) MUST run in the container. Decrypted malware never
+#   lands on the host — CLAUDE.md forbids it — and we also avoid MSYS mangling
+#   of `C:\Users\...\Temp\...` when handing paths to host Python.
+#   capa / floss / pefile are baked into the image (see Dockerfile).
+#
+# Output convention (same as yara-scan): the tool writes to a per-invocation
+# /tmp dir, results are published to /analysis/output (bind-mounted to ./output)
+# and copied back to the host output dir as a fallback.
+#
+# Usage: run_container_tool <container_binary_path> <python_script> [extra_args...]
+run_container_tool() {
+    local target="$1"
+    local py_script="$2"
+    shift 2
+    local outdir
+    outdir=$(mk_container_out tool)
+    local rc=0
+
+    docker cp "$SCRIPT_DIR_WIN/$py_script" "$CONTAINER:/tmp/$py_script" >/dev/null 2>&1
+    dexec "$CONTAINER" python3 "/tmp/$py_script" "$target" --output-dir "$outdir" "$@" || rc=$?
+    # Publish only on success - the same rule the office-analyze branch already
+    # follows. A failed step may have written a half-finished JSON, and
+    # analyze-full's later ioc-extract / classify steps read output/*.json
+    # indiscriminately, so a truncated file there is worse than no file at all.
+    # No caller wants partial output: pe_triage / capa_scanner / floss_analyzer /
+    # pe_fallback_extract only exit non-zero when they could not analyse the
+    # sample at all, and every analyze-full step already tolerates a missing
+    # artifact.
+    if [ "$rc" -eq 0 ]; then
+        publish_container_out "$outdir"
+    else
+        drop_container_out "$outdir"
+    fi
+    return $rc
+}
+
+# Resolve <binary> (host path / .enc.gz / .zip / container path) and run a
+# Python analysis tool on it inside the container.
+# Usage: run_tool_on_binary <binary_path> <python_script> [extra_args...]
+run_tool_on_binary() {
     local binary="$1"
     local py_script="$2"
     shift 2
-    local extra_args=("$@")
-    local target="$binary"
-    local tmp_dir=""
-
-    if [[ "$binary" == *.enc.gz ]]; then
-        ensure_running
-        local container_path
-        container_path=$(decrypt_in_container "$binary") || { echo "Error: Decryption failed." >&2; exit 1; }
-        local win_temp="${USERPROFILE}/AppData/Local/Temp"
-        tmp_dir=$(mktemp -d -p "$win_temp")
-        local dec_name
-        dec_name=$(basename "$container_path")
-        docker cp "$CONTAINER:$container_path" "$tmp_dir/$dec_name"
-        cleanup_container "$container_path"
-        target="$tmp_dir/$dec_name"
-    fi
-
-    python3 "$SCRIPT_DIR_WIN/$py_script" "$target" "${extra_args[@]}"
-
-    [ -n "$tmp_dir" ] && rm -rf "$tmp_dir"
+    local rc=0
+    ensure_running
+    resolve_binary "$binary" || exit 1
+    run_container_tool "$RESOLVED_BINARY" "$py_script" "$@" || rc=$?
+    cleanup_resolved
+    return $rc
 }
 
 # Run dotnet-decompile tool
@@ -288,7 +480,7 @@ run_dotnet() {
     local binary="$2"
     local tool="$REPO_ROOT/tools/dotnet-decompiler/dotnet-decompile.exe"
     [ ! -f "$tool" ] && {
-        echo "Error: dotnet-decompile.exe not found. Build with: cd tools/dotnet-decompiler && go build -o dotnet-decompile.exe ."
+        echo "Error: dotnet-decompile.exe not found. Build with: cd tools/dotnet-decompiler && go build -trimpath -ldflags=\"-s -w\" -o dotnet-decompile.exe ."
         exit 1
     }
     "$tool" "$subcmd" "$binary"
@@ -353,6 +545,23 @@ _auto_log() {
     return 0
 }
 
+# --- Global flag pre-parse ---
+# --keep-input-copy: keep the sample copy that prepare_binary stages in input/.
+# By default that copy is transient (see cleanup_resolved) so scanning a sample
+# does not leave a plaintext binary in the repo working tree.
+# Not stripped for `exec`/`shell`: their args are forwarded verbatim.
+if [ "${1:-}" != "exec" ] && [ "${1:-}" != "shell" ]; then
+    _gargs=()
+    for _ga in "$@"; do
+        if [ "$_ga" = "--keep-input-copy" ]; then
+            KEEP_INPUT_COPY=1
+        else
+            _gargs+=("$_ga")
+        fi
+    done
+    set -- "${_gargs[@]}"
+fi
+
 # --- Command dispatch ---
 # Defensive: never let logging errors kill the main flow
 _auto_log "$@" || true
@@ -393,10 +602,10 @@ case "${1:-}" in
         echo "=== Results in: $SCRIPT_DIR_WIN/output/ ==="
         ;;
     info|decompile|functions|strings|imports|exports|xrefs)
-        local subcmd="$1"
+        subcmd="$1"
         shift
         # Parse optional --raw-x64 / --raw-x86 / --processor flags
-        local target=""
+        target=""
         while [ $# -gt 0 ]; do
             case "$1" in
                 --raw-x64) PROCESSOR_ID="x86:LE:64:default"; RAW_BINARY=1; shift ;;
@@ -406,11 +615,11 @@ case "${1:-}" in
             esac
         done
         [ -z "$target" ] && { echo "Usage: ghidra.sh $subcmd [--raw-x64|--raw-x86|--processor ID] <binary>"; exit 1; }
-        local script_map="info:binary_info.py decompile:decompile_all.py functions:list_functions.py strings:extract_strings.py imports:list_imports.py exports:list_exports.py xrefs:xrefs_report.py"
-        local script=""
+        script_map="info:binary_info.py decompile:decompile_all.py functions:list_functions.py strings:extract_strings.py imports:list_imports.py exports:list_exports.py xrefs:xrefs_report.py"
+        script=""
         for entry in $script_map; do
-            local key="${entry%%:*}"
-            local val="${entry#*:}"
+            key="${entry%%:*}"
+            val="${entry#*:}"
             [ "$key" = "$subcmd" ] && script="$val"
         done
         run_ghidra_scripts "$target" "$script"
@@ -431,7 +640,12 @@ case "${1:-}" in
         ENC_GZ_NAME="${BASENAME}.enc.gz"
         ENC_GZ_CONTAINER="/tmp/${ENC_GZ_NAME}"
         echo "[*] Encrypting $CONTAINER_FILE -> $ENC_GZ_NAME"
-        dexec "$CONTAINER" python3 -c "
+        # The password lives in .env on the host; it must be handed to the
+        # container explicitly (docker exec does not inherit the host env).
+        ENC_PASSWORD=""
+        [ -f "$ENV_FILE" ] && ENC_PASSWORD=$(grep -E '^QUARANTINE_PASSWORD=' "$ENV_FILE" | cut -d= -f2- | tr -d '"' | tr -d "'")
+        [ -z "$ENC_PASSWORD" ] && { echo "Error: QUARANTINE_PASSWORD not found in $ENV_FILE"; exit 1; }
+        dexec -e QUARANTINE_PASSWORD="$ENC_PASSWORD" "$CONTAINER" python3 -c "
 import hashlib, gzip, os
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives import padding
@@ -451,7 +665,10 @@ with gzip.open('$ENC_GZ_CONTAINER', 'wb') as gz:
 print(f'[OK] Encrypted: $ENC_GZ_CONTAINER ({os.path.getsize(\"$ENC_GZ_CONTAINER\")} bytes)')
 print(f'[OK] Original SHA256: {hashlib.sha256(data).hexdigest()}')
 "
-        HOST_OUTPUT="$OUTPUT_DIR/$ENC_GZ_NAME"
+        # OUTPUT_DIR was never defined here — the copy used to land in the drive
+        # root (`/name.enc.gz` → C:\name.enc.gz under MSYS).
+        mkdir -p "$SCRIPT_DIR_WIN/output"
+        HOST_OUTPUT="$SCRIPT_DIR_WIN/output/$ENC_GZ_NAME"
         docker cp "$CONTAINER:$ENC_GZ_CONTAINER" "$HOST_OUTPUT" 2>/dev/null && \
             echo "[OK] Copied to host: $HOST_OUTPUT" || \
             echo "[*] Encrypted file in container: $ENC_GZ_CONTAINER"
@@ -465,11 +682,13 @@ print(f'[OK] Original SHA256: {hashlib.sha256(data).hexdigest()}')
         if [ -z "$2" ]; then
             echo "Usage: ghidra.sh yara-scan <binary|encrypted.enc.gz>"
             echo "       ghidra.sh yara-scan --in-container <container-path>"
+            echo ""
+            echo "  --keep-input-copy   Keep the sample copy staged in input/"
+            echo "                      (default: it is removed when the scan ends)"
             exit 1
         fi
         ensure_running
         SCAN_TARGET=""
-        YARA_CLEANUP=""
         if [ "$2" = "--in-container" ]; then
             [ -z "$3" ] && { echo "Error: --in-container requires a path argument"; exit 1; }
             # Verify the file exists inside the container before proceeding
@@ -477,54 +696,54 @@ print(f'[OK] Original SHA256: {hashlib.sha256(data).hexdigest()}')
                 echo "Error: File not found inside container: $3"
                 exit 1
             fi
-            SCAN_TARGET="$3"
-            YARA_CLEANUP=""  # do NOT delete: the file belongs to the caller
-        elif [[ "$2" == *.enc.gz ]]; then
-            SCAN_TARGET=$(decrypt_in_container "$2") || { echo "Error: Decryption failed."; exit 1; }
-            YARA_CLEANUP="$SCAN_TARGET"
+            SCAN_TARGET="$3"   # do NOT delete: the file belongs to the caller
         else
-            local_name=$(basename "$2")
-            docker cp "$2" "$CONTAINER:/tmp/$local_name"
-            SCAN_TARGET="/tmp/$local_name"
-            YARA_CLEANUP="$SCAN_TARGET"
+            # resolve_binary handles .enc.gz (decrypt in container), .zip and plain
+            # host files (staged via the mounted input/ dir). Never docker-cp the
+            # sample into /tmp: that lands as root and blocks a later decryption of
+            # the same basename.
+            resolve_binary "$2" || exit 1
+            SCAN_TARGET="$RESOLVED_BINARY"  # cleanup_resolved owns it
         fi
         docker cp "$SCRIPT_DIR_WIN/yara_scanner.py" "$CONTAINER:/tmp/yara_scanner.py"
         docker cp "$SCRIPT_DIR_WIN/yara-rules" "$CONTAINER:/tmp/yara-rules"
-        dexec "$CONTAINER" mkdir -p /tmp/output
+        YARA_OUT=$(mk_container_out yara)
         echo "=== YARA Scan: $(basename "$SCAN_TARGET") ==="
+        _yara_rc=0
         dexec "$CONTAINER" python3 /tmp/yara_scanner.py "$SCAN_TARGET" \
-            --output-dir /tmp/output --rules-dir /tmp/yara-rules
-        yara_json="/tmp/output/$(basename "${SCAN_TARGET%.*}")_yara.json"
-        dexec "$CONTAINER" cp /tmp/output/*_yara.json /analysis/output/ 2>/dev/null || true
-        docker cp "$CONTAINER:$yara_json" "$SCRIPT_DIR_WIN/output/" 2>/dev/null || \
-            docker cp "$CONTAINER:/tmp/output/" "$SCRIPT_DIR_WIN/output/" 2>/dev/null || true
-        [ -n "$YARA_CLEANUP" ] && cleanup_container "$YARA_CLEANUP"
+            --output-dir "$YARA_OUT" --rules-dir /tmp/yara-rules || _yara_rc=$?
+        publish_container_out "$YARA_OUT"
+        cleanup_resolved
+        [ "$_yara_rc" -eq 0 ] || exit "$_yara_rc"
         echo "=== Results in: $SCRIPT_DIR_WIN/output/ ==="
         ;;
     capa)
-        [ -z "$2" ] && { echo "Usage: ghidra.sh capa <binary|encrypted.enc.gz>"; exit 1; }
+        [ -z "$2" ] && { echo "Usage: ghidra.sh capa [--keep-input-copy] <binary|encrypted.enc.gz>"; exit 1; }
         echo "=== CAPA Analysis: $(basename "$2") ==="
-        run_host_tool "$2" capa_scanner.py --output-dir "$SCRIPT_DIR_WIN/output"
+        run_tool_on_binary "$2" capa_scanner.py "${@:3}"
+        echo "=== Results in: $SCRIPT_DIR_WIN/output/ ==="
         ;;
     pe-fallback-extract)
-        [ -z "$2" ] && { echo "Usage: ghidra.sh pe-fallback-extract <binary|file.enc.gz>"; exit 1; }
+        [ -z "$2" ] && { echo "Usage: ghidra.sh pe-fallback-extract [--keep-input-copy] <binary|file.enc.gz>"; exit 1; }
         echo "=== PE Fallback Extraction: $(basename "$2") ==="
-        run_host_tool "$2" pe_fallback_extract.py --output-dir "$SCRIPT_DIR_WIN/output"
+        run_tool_on_binary "$2" pe_fallback_extract.py
+        echo "=== Results in: $SCRIPT_DIR_WIN/output/ ==="
         ;;
     pe-triage)
         # Usage:
         #   ghidra.sh pe-triage <host-path-or-.enc.gz>
         #   ghidra.sh pe-triage --in-container <container-absolute-path>
         #
-        # Path policy:
-        #   - .enc.gz files are decrypted INSIDE the container, then pe_triage.py
-        #     is executed INSIDE the container. The plaintext binary never lands on
-        #     the host (and we avoid MSYS path-mangling of `C:\Users\...\Temp\...`
-        #     when handing off to host Python — see KB-22).
-        #   - Plain host binaries still run host-side (fast path).
+        # Path policy (KB-22): pe_triage.py ALWAYS runs inside the container —
+        # plain host files included. The plaintext binary never lands on the host,
+        # and Windows temp paths are never handed to host Python (MSYS mangles
+        # `C:\Users\...\Temp\...`).
         if [ -z "$2" ]; then
             echo "Usage: ghidra.sh pe-triage <binary|file.enc.gz>"
             echo "       ghidra.sh pe-triage --in-container <container-path>"
+            echo ""
+            echo "  --keep-input-copy   Keep the sample copy staged in input/"
+            echo "                      (default: it is removed when triage ends)"
             exit 1
         fi
         if [ "$2" = "--in-container" ]; then
@@ -535,27 +754,12 @@ print(f'[OK] Original SHA256: {hashlib.sha256(data).hexdigest()}')
                 exit 1
             fi
             echo "=== PE Triage (in-container): $(basename "$3") ==="
-            docker cp "$SCRIPT_DIR_WIN/pe_triage.py" "$CONTAINER:/tmp/pe_triage.py"
-            dexec "$CONTAINER" mkdir -p /tmp/output
-            dexec "$CONTAINER" python3 /tmp/pe_triage.py "$3" --output-dir /tmp/output
-            mkdir -p "$SCRIPT_DIR_WIN/output"
-            docker cp "$CONTAINER:/tmp/output/." "$SCRIPT_DIR_WIN/output/" 2>/dev/null || true
-        elif [[ "$2" == *.enc.gz ]]; then
-            # Auto-route .enc.gz through in-container path (avoids MSYS host-path bug).
-            ensure_running
-            resolve_binary "$2" || exit 1
-            local_target="$RESOLVED_BINARY"
-            echo "=== PE Triage (in-container, auto-decrypted): $(basename "$2") ==="
-            docker cp "$SCRIPT_DIR_WIN/pe_triage.py" "$CONTAINER:/tmp/pe_triage.py"
-            dexec "$CONTAINER" mkdir -p /tmp/output
-            dexec "$CONTAINER" python3 /tmp/pe_triage.py "$local_target" --output-dir /tmp/output
-            mkdir -p "$SCRIPT_DIR_WIN/output"
-            docker cp "$CONTAINER:/tmp/output/." "$SCRIPT_DIR_WIN/output/" 2>/dev/null || true
-            cleanup_resolved
+            run_container_tool "$3" pe_triage.py
         else
-            echo "=== PE Triage: $(basename "$2") ==="
-            run_host_tool "$2" pe_triage.py --output-dir "$SCRIPT_DIR_WIN/output"
+            echo "=== PE Triage (in-container): $(basename "$2") ==="
+            run_tool_on_binary "$2" pe_triage.py
         fi
+        echo "=== Results in: $SCRIPT_DIR_WIN/output/ ==="
         ;;
     ioc-extract)
         [ -z "$2" ] && { echo "Usage: ghidra.sh ioc-extract <binary_name|file.enc.gz|host-path>"; exit 1; }
@@ -636,21 +840,24 @@ MDT_HELP
         esac
         ;;
 
-    # --- FLOSS obfuscated string analysis (host-side) ---
+    # --- FLOSS obfuscated string analysis (in-container) ---
     floss)
         if [ -z "$2" ]; then
             echo "Usage: ghidra.sh floss <binary|file.enc.gz> [--min-len N] [--timeout SEC]"
+            echo "                       [--keep-input-copy]"
             echo ""
             echo "Extracts strings that raw extraction misses:"
             echo "  Stack strings   — built byte-by-byte on the stack"
             echo "  Tight-loop      — XOR/ROT obfuscation loops"
             echo "  Decoded strings — emulation-based dynamic extraction"
             echo ""
-            echo "Requires: pip install flare-floss"
+            echo "(FLOSS runs inside the Ghidra container — no host install needed)"
+            echo "--keep-input-copy keeps the staged copy in input/ (default: removed after the run)"
             exit 1
         fi
         echo "=== FLOSS Analysis: $(basename "$2") ==="
-        run_host_tool "$2" floss_analyzer.py --output-dir "$SCRIPT_DIR_WIN/output"
+        run_tool_on_binary "$2" floss_analyzer.py "${@:3}"
+        echo "=== Results in: $SCRIPT_DIR_WIN/output/ ==="
         ;;
 
     # --- Office document analysis (oletools, in-container) ---
@@ -669,17 +876,17 @@ MDT_HELP
         fi
         ensure_running
         resolve_binary "$2" || exit 1
-        local _off_target="$RESOLVED_BINARY"
+        _off_target="$RESOLVED_BINARY"
         echo "=== Office Analysis: $(basename "$2") ==="
         docker cp "$SCRIPT_DIR_WIN/office_analyzer.py" "$CONTAINER:/tmp/office_analyzer.py"
-        dexec "$CONTAINER" mkdir -p /tmp/output
+        _off_out=$(mk_container_out office)
         if dexec "$CONTAINER" python3 /tmp/office_analyzer.py "$_off_target" \
-            --output-dir /tmp/output "${@:3}"; then
-            mkdir -p "$SCRIPT_DIR_WIN/output"
-            docker cp "$CONTAINER:/tmp/output/" "$SCRIPT_DIR_WIN/output/" 2>/dev/null || true
+            --output-dir "$_off_out" "${@:3}"; then
+            publish_container_out "$_off_out"
             echo "=== Results in: $SCRIPT_DIR_WIN/output/ ==="
         else
-            local _off_rc=$?
+            _off_rc=$?
+            drop_container_out "$_off_out"
             cleanup_resolved
             exit $_off_rc
         fi
@@ -707,24 +914,25 @@ MDT_HELP
         fi
         ensure_running
         resolve_binary "$2" || exit 1
-        local _viz_target="$RESOLVED_BINARY"
+        _viz_target="$RESOLVED_BINARY"
         # Collect extra flags (--no-plot, --max-mb N) and pass through
-        local _viz_flags=""
-        local _i=3
+        _viz_flags=""
+        _i=3
         while [ "$_i" -le "$#" ]; do
             eval "_viz_flags=\"$_viz_flags \${$_i}\""
             _i=$(( _i + 1 ))
         done
         echo "=== Binary Visualization: $(basename "$2") ==="
         docker cp "$SCRIPT_DIR_WIN/binary_viz.py" "$CONTAINER:/tmp/binary_viz.py"
-        dexec "$CONTAINER" mkdir -p /tmp/output
+        _viz_out=$(mk_container_out viz)
+        _viz_rc=0
         # shellcheck disable=SC2086
         dexec "$CONTAINER" python3 /tmp/binary_viz.py "$_viz_target" \
-            --output-dir /tmp/output $_viz_flags
-        mkdir -p "$SCRIPT_DIR_WIN/output"
-        docker cp "$CONTAINER:/tmp/output/" "$SCRIPT_DIR_WIN/output/" 2>/dev/null || true
+            --output-dir "$_viz_out" $_viz_flags || _viz_rc=$?
+        publish_container_out "$_viz_out"
         echo "=== Results in: $SCRIPT_DIR_WIN/output/ ==="
         cleanup_resolved
+        [ "$_viz_rc" -eq 0 ] || exit "$_viz_rc"
         ;;
 
     # --- Full pipeline ---
@@ -741,34 +949,33 @@ MDT_HELP
             [ -z "$_target" ] && { echo "Usage: ghidra.sh analyze-full --zip-password PW <file.zip>"; exit 1; }
         fi
         ensure_running
+        # BINARY_NAME         = Path.stem convention  -> _triage/_floss/_viz/...
+        # GHIDRA_PROGRAM_NAME = Ghidra program name   -> _strings/_imports/...
+        # (see the "Output-file naming conventions" block above)
         BINARY_NAME=$(basename "$_target" | sed 's/\.enc\.gz$//' | sed 's/\.[^.]*$//')
+        GHIDRA_PROGRAM_NAME=$(basename "$_target" | sed 's/\.enc\.gz$//')
         echo "=== Full Analysis Pipeline: $(basename "$_target") ==="
 
-        # Resolve binary once
-        if [[ "$_target" == *.enc.gz ]] || [[ "$_target" == *.zip ]]; then
-            resolve_binary "$_target" || exit 1
-            PIPELINE_BINARY="$RESOLVED_BINARY"
-            # Update BINARY_NAME from actual resolved binary (ZIP may have different filename)
-            BINARY_NAME=$(basename "$PIPELINE_BINARY" | sed 's/\.enc\.gz$//' | sed 's/\.[^.]*$//')
-            win_temp="${USERPROFILE}/AppData/Local/Temp"
-            PIPELINE_TMPDIR=$(mktemp -d -p "$win_temp")
-            dec_name=$(basename "$PIPELINE_BINARY")
-            docker cp "$CONTAINER:$PIPELINE_BINARY" "$PIPELINE_TMPDIR/$dec_name"
-            HOST_BINARY="$PIPELINE_TMPDIR/$dec_name"
-        else
-            resolve_binary "$_target" || exit 1
-            PIPELINE_BINARY="$RESOLVED_BINARY"
-            HOST_BINARY="$_target"
-            PIPELINE_TMPDIR=""
-        fi
+        # Resolve binary once. Every tool that touches the sample runs INSIDE the
+        # container (CLAUDE.md: no plaintext malware on the host), so the pipeline
+        # only ever holds a container-internal path.
+        resolve_binary "$_target" || exit 1
+        PIPELINE_BINARY="$RESOLVED_BINARY"
+        # One output dir for the whole run: steps may accumulate artifacts within
+        # this invocation, but nothing from an earlier run can bleed in.
+        PIPELINE_OUT=$(mk_container_out pipeline)
+        # Update both names from the actual resolved binary (a ZIP / .enc.gz may
+        # carry a different filename than the argument we were given).
+        BINARY_NAME=$(basename "$PIPELINE_BINARY" | sed 's/\.enc\.gz$//' | sed 's/\.[^.]*$//')
+        GHIDRA_PROGRAM_NAME=$(basename "$PIPELINE_BINARY")
         auto_detect_processor "$PIPELINE_BINARY"
 
         # Run pipeline steps directly (no recursive shell invocation)
         PIPELINE_ERRORS=()
 
         echo "[0/7] PE Triage..."
-        _triage_output=$(python3 "$SCRIPT_DIR_WIN/pe_triage.py" "$HOST_BINARY" --json --output-dir "$SCRIPT_DIR_WIN/output" 2>&1)
-        _triage_exit=$?
+        _triage_exit=0
+        _triage_output=$(run_container_tool "$PIPELINE_BINARY" pe_triage.py --json 2>&1) || _triage_exit=$?
         if [ $_triage_exit -ne 0 ]; then
             echo "[!] PE Triage failed (non-critical, continuing)" >&2
             PIPELINE_ERRORS+=("PE-Triage")
@@ -790,10 +997,8 @@ MDT_HELP
                 if [ -n "$_largest" ]; then
                     PIPELINE_BINARY="/tmp/msi_extracted/$_largest"
                     BINARY_NAME=$(echo "$_largest" | sed 's/\.[^.]*$//')
+                    GHIDRA_PROGRAM_NAME="$_largest"
                     echo "[*] MSI primary target: $_largest" >&2
-                    # Copy to host temp for host-side tools (YARA/CAPA)
-                    docker cp "$CONTAINER:$PIPELINE_BINARY" "$PIPELINE_TMPDIR/$_largest" 2>/dev/null || true
-                    HOST_BINARY="$PIPELINE_TMPDIR/$_largest"
                     # Run YARA on ALL extracted PEs
                     echo "[*] Running YARA on all MSI-embedded PEs..." >&2
                     for _pe in $_pe_list; do
@@ -808,34 +1013,34 @@ MDT_HELP
         fi
 
         echo "[1/7] FLOSS Obfuscated String Analysis..."
-        if python3 "$SCRIPT_DIR_WIN/floss_analyzer.py" "$HOST_BINARY" --output-dir "$SCRIPT_DIR_WIN/output" 2>&1; then
+        if run_container_tool "$PIPELINE_BINARY" floss_analyzer.py; then
             echo "[+] FLOSS complete" >&2
         else
-            echo "[!] FLOSS skipped (install: pip install flare-floss)" >&2
+            echo "[!] FLOSS failed (non-critical, continuing)" >&2
             PIPELINE_ERRORS+=("FLOSS")
         fi
 
         echo "[2/7] Binary Visualization..."
         docker cp "$SCRIPT_DIR_WIN/binary_viz.py" "$CONTAINER:/tmp/binary_viz.py"
-        dexec "$CONTAINER" mkdir -p /tmp/output
         if dexec "$CONTAINER" python3 /tmp/binary_viz.py "$PIPELINE_BINARY" \
-            --output-dir /tmp/output 2>&1; then
-            docker cp "$CONTAINER:/tmp/output/" "$SCRIPT_DIR_WIN/output/" 2>/dev/null || true
+            --output-dir "$PIPELINE_OUT" 2>&1; then
+            publish_container_out "$PIPELINE_OUT" 1
         else
             echo "[!] Binary viz failed (non-critical, continuing)" >&2
             PIPELINE_ERRORS+=("BinaryViz")
         fi
 
         # Auto-detect Office documents and run oletools
-        _host_ext="${HOST_BINARY##*.}"
-        _host_ext=$(echo "$_host_ext" | tr '[:upper:]' '[:lower:]')
-        case "$_host_ext" in
+        _sample_ext="$(basename "$PIPELINE_BINARY")"
+        _sample_ext="${_sample_ext##*.}"
+        _sample_ext=$(echo "$_sample_ext" | tr '[:upper:]' '[:lower:]')
+        case "$_sample_ext" in
             doc|dot|xls|xlt|ppt|docx|docm|dotm|xlsx|xlsm|xltm|pptx|pptm|rtf|msg)
                 echo "[2b/7] Office Document Detected — running oletools..."
                 docker cp "$SCRIPT_DIR_WIN/office_analyzer.py" "$CONTAINER:/tmp/office_analyzer.py"
                 if dexec "$CONTAINER" python3 /tmp/office_analyzer.py "$PIPELINE_BINARY" \
-                    --output-dir /tmp/output 2>&1; then
-                    docker cp "$CONTAINER:/tmp/output/" "$SCRIPT_DIR_WIN/output/" 2>/dev/null || true
+                    --output-dir "$PIPELINE_OUT" 2>&1; then
+                    publish_container_out "$PIPELINE_OUT" 1
                 else
                     echo "[!] Office analysis failed (non-critical)" >&2
                     PIPELINE_ERRORS+=("OleTools")
@@ -846,17 +1051,15 @@ MDT_HELP
         echo "[3/7] YARA Scan..."
         docker cp "$SCRIPT_DIR_WIN/yara_scanner.py" "$CONTAINER:/tmp/yara_scanner.py"
         docker cp "$SCRIPT_DIR_WIN/yara-rules" "$CONTAINER:/tmp/yara-rules"
-        dexec "$CONTAINER" mkdir -p /tmp/output
         if ! dexec "$CONTAINER" python3 /tmp/yara_scanner.py "$PIPELINE_BINARY" \
-            --output-dir /tmp/output --rules-dir /tmp/yara-rules 2>&1; then
+            --output-dir "$PIPELINE_OUT" --rules-dir /tmp/yara-rules 2>&1; then
             echo "[!] YARA scan failed (non-critical, continuing)" >&2
             PIPELINE_ERRORS+=("YARA-Scan")
         fi
-        dexec "$CONTAINER" cp /tmp/output/*_yara.json /analysis/output/ 2>/dev/null || true
-        docker cp "$CONTAINER:/tmp/output/" "$SCRIPT_DIR_WIN/output/" 2>/dev/null || true
+        publish_container_out "$PIPELINE_OUT" 1
 
         echo "[4/7] CAPA Analysis..."
-        if ! python3 "$SCRIPT_DIR_WIN/capa_scanner.py" "$HOST_BINARY" --output-dir "$SCRIPT_DIR_WIN/output" 2>&1; then
+        if ! run_container_tool "$PIPELINE_BINARY" capa_scanner.py; then
             echo "[!] CAPA analysis failed (non-critical, continuing)" >&2
             PIPELINE_ERRORS+=("CAPA")
         fi
@@ -865,26 +1068,45 @@ MDT_HELP
         if ! run_headless "$PIPELINE_BINARY" "${ALL_SCRIPTS[@]}"; then
             echo "[!] Ghidra analysis failed — running PE fallback extraction" >&2
             PIPELINE_ERRORS+=("Ghidra")
-            if [ -n "$HOST_BINARY" ] && [ -f "$HOST_BINARY" ]; then
-                python3 "$SCRIPT_DIR_WIN/pe_fallback_extract.py" "$HOST_BINARY" \
-                    --output-dir "$SCRIPT_DIR_WIN/output" 2>&1 || true
+            run_container_tool "$PIPELINE_BINARY" pe_fallback_extract.py || true
+        fi
+
+        # Which name must the report tools be given? Normally the Ghidra program
+        # name; but if Ghidra failed and step [5/7] fell back to
+        # pe_fallback_extract.py, the only readable inputs are its stem-named
+        # _pe_strings.txt / _pe_imports.txt, so fall back to BINARY_NAME.
+        REPORT_NAME="$GHIDRA_PROGRAM_NAME"
+        if ! _have_report_inputs "$REPORT_NAME"; then
+            if _have_report_inputs "$BINARY_NAME"; then
+                echo "[*] No ${GHIDRA_PROGRAM_NAME}_* Ghidra outputs - using PE-fallback name '$BINARY_NAME'" >&2
+                REPORT_NAME="$BINARY_NAME"
+            else
+                echo "[!] output/ holds no Ghidra or PE-fallback files for '$GHIDRA_PROGRAM_NAME'" >&2
             fi
         fi
 
         echo "[6/7] IOC Extraction..."
-        if ! python3 "$SCRIPT_DIR_WIN/ioc_extractor.py" "$BINARY_NAME" --output-dir "$SCRIPT_DIR_WIN/output" 2>&1; then
-            echo "[!] IOC extraction failed (non-critical, continuing)" >&2
+        _ioc_ok=1
+        python3 "$SCRIPT_DIR_WIN/ioc_extractor.py" "$REPORT_NAME" --output-dir "$SCRIPT_DIR_WIN/output" 2>&1 || _ioc_ok=0
+        # Exit status alone is not enough: a step that finds no inputs must never
+        # pass for success, so the artifact itself has to be there.
+        [ -f "$SCRIPT_DIR/output/${REPORT_NAME}_iocs.json" ] || _ioc_ok=0
+        if [ "$_ioc_ok" -ne 1 ]; then
+            echo "[!] IOC extraction produced no ${REPORT_NAME}_iocs.json (continuing)" >&2
             PIPELINE_ERRORS+=("IOC-Extraction")
         fi
 
         echo "[7/7] Malware Classification..."
-        if ! python3 "$SCRIPT_DIR_WIN/malware_classifier.py" "$BINARY_NAME" --output-dir "$SCRIPT_DIR_WIN/output" 2>&1; then
-            echo "[!] Classification failed (non-critical, continuing)" >&2
+        _clf_ok=1
+        python3 "$SCRIPT_DIR_WIN/malware_classifier.py" "$REPORT_NAME" --output-dir "$SCRIPT_DIR_WIN/output" 2>&1 || _clf_ok=0
+        [ -f "$SCRIPT_DIR/output/${REPORT_NAME}_classification.json" ] || _clf_ok=0
+        if [ "$_clf_ok" -ne 1 ]; then
+            echo "[!] Classification produced no ${REPORT_NAME}_classification.json (continuing)" >&2
             PIPELINE_ERRORS+=("Classification")
         fi
 
+        drop_container_out "$PIPELINE_OUT"
         cleanup_resolved
-        [ -n "$PIPELINE_TMPDIR" ] && rm -rf "$PIPELINE_TMPDIR"
         if [ ${#PIPELINE_ERRORS[@]} -gt 0 ]; then
             echo "[!] Pipeline completed with errors: ${PIPELINE_ERRORS[*]}" >&2
             echo "=== Partial results in: $SCRIPT_DIR_WIN/output/ ==="
@@ -897,9 +1119,12 @@ MDT_HELP
         echo "=== Next step (manual) ==="
         echo "Generate sandbox hints: bash tools/malware-sandbox/sandbox.sh hint $SCRIPT_DIR_WIN/output"
         echo "Generate narrative report: invoke 'watchtowr-report' skill in Claude Code with these artifacts:"
+        # Two conventions again: the container tools name their JSON after the
+        # stem (BINARY_NAME); ioc_extractor / malware_classifier name theirs
+        # after whatever they were given (REPORT_NAME).
         for _f in "${BINARY_NAME}_triage.json" "${BINARY_NAME}_floss.json" "${BINARY_NAME}_viz.json" \
                    "${BINARY_NAME}_yara.json" "${BINARY_NAME}_capa.json" \
-                   "${BINARY_NAME}_iocs.json" "${BINARY_NAME}_classification.json"; do
+                   "${REPORT_NAME}_iocs.json" "${REPORT_NAME}_classification.json"; do
             if [ -f "$SCRIPT_DIR_WIN/output/$_f" ]; then
                 echo "  - $SCRIPT_DIR_WIN/output/$_f"
             fi
@@ -1086,8 +1311,8 @@ Ghidra Analysis (Docker container):
     --processor <lang_id>         Custom processor (e.g., ARM:LE:32:v8T)
   Example: ghidra.sh decompile --raw-x64 shellcode.bin
 
-Post-Analysis (host-side):
-  pe-triage <binary>              PE Triage (pefile + DiE CLI)
+Post-Analysis (binary-touching tools run in-container; report tools host-side):
+  pe-triage <binary>              PE Triage (PE parser + DiE CLI)
   pe-triage --in-container <path> PE Triage on a file already inside the container
   floss <binary>                  FLOSS obfuscated string extraction (stack/decoded strings)
   yara-scan <binary>              YARA scan (APT attribution)
@@ -1103,6 +1328,12 @@ Post-Analysis (host-side):
                                    direct syscalls / Hell's Gate)
                                   Run 'maldev-detect --help' for full help.
   analyze-full <binary>           Full pipeline (all of the above, 7 steps)
+
+  Global flag (any command that takes a host binary):
+    --keep-input-copy             Keep the sample copy staged in input/.
+                                  Default: the staged copy is deleted when the
+                                  command ends. A file you placed in input/
+                                  yourself is never deleted.
 
 Office Document Analysis (in-container, oletools):
   office-analyze <file>           VBA macro + auto-exec + OLE stream analysis

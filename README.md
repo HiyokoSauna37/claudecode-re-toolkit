@@ -207,7 +207,7 @@ Docker-based Ghidra automation:
 
 VMware Workstation VM automation:
 - One-command `analyze` workflow that auto-handles snapshot revert, Host-Only network isolation, malware copy, pre/post snapshots, HollowsHunter scan, and final revert (no manual `start` / `net-isolate` needed). `--anti-vm` flag auto-applies VMX hardening (CPUID/SMBIOS/MAC spoofing) before VM start
-- 3-Level Unpacking System (memdump-racer → TinyTracer → x64dbg)
+- 3-Level Unpacking System (memdump-racer → TinyTracer → mal_unpack, with an x64dbg fallback procedure)
 - Frida DBI with anti-debug bypass and memory dumping (with preflight check for guest Frida install)
 - DispatchLogger COM monitoring for script-based malware (VBS, JS, HTA, PowerShell, Office macros)
 - FakeNet-NG integration for C2 protocol capture, with `fakenet_validate.py` config validator and `build_http_response.py` response builder
@@ -217,7 +217,7 @@ VMware Workstation VM automation:
 - **`vm-detect-checker.exe`** — runs inside the VM to enumerate hardware-level VMware fingerprints (SMBIOS, ACPI, MAC OUI) that VMProtect/Themida key off
 - `regshot_diff.py` for pre/post registry diffing
 - Network isolation management
-- Comprehensive guest tool suite (x64dbg, PE-sieve, HollowsHunter, etc.)
+- Comprehensive guest tool suite (x64dbg, PE-sieve, HollowsHunter, mal_unpack, etc.)
 - Automatic `.enc.gz` quarantine decryption inside the VM (host never touches raw malware)
 - BOM-less UTF-8 script deployment and `Start-Process`-based persistent tool launching to avoid vmrun hangs
 
@@ -228,6 +228,25 @@ These ship as standalone binaries / containers and are invoked outside the three
 - **`tools/quarantine/quarantine.exe`** — Quarantine browser CLI: `quarantine list` / `info <#|domain>` / `analyze <#|domain>` (decrypt + ghidra `analyze-full` in one shot). Gives you an at-a-glance view of what malware-fetch has captured without scripting around `.enc.gz`.
 - **`tools/mergen/mergen.sh`** — VMProtect devirtualization via LLVM IR lifting. Lifts protected functions to LLVM IR for human-readable analysis when malware-sandbox unpacking can't reach the original code.
 - **`tools/dotnet-decompiler/`** — ILSpy CLI Docker image. Auto-pulled by `ghidra.sh dotnet-decompile`; can also be invoked directly for batch .NET workflows.
+
+## Credits
+
+This toolkit orchestrates excellent third-party tools. Their authors deserve the credit.
+
+**Guest analysis tools**
+- [pe-sieve](https://github.com/hasherezade/pe-sieve), [hollows_hunter](https://github.com/hasherezade/hollows_hunter), [mal_unpack](https://github.com/hasherezade/mal_unpack), [tiny_tracer](https://github.com/hasherezade/tiny_tracer) — hasherezade (BSD-2-Clause)
+- [x64dbg](https://github.com/x64dbg/x64dbg) (GPL-3.0), [ScyllaHide](https://github.com/x64dbg/ScyllaHide)
+- [Frida](https://frida.re/) (wxWindows Library Licence), [FakeNet-NG](https://github.com/mandiant/flare-fakenet-ng) (Apache-2.0)
+- [Sysinternals Process Monitor](https://learn.microsoft.com/sysinternals/downloads/procmon)
+
+**Static analysis**
+- [Ghidra](https://github.com/NationalSecurityAgency/ghidra) — NSA (Apache-2.0)
+- [capa](https://github.com/mandiant/capa), [FLOSS](https://github.com/mandiant/flare-floss) — Mandiant (Apache-2.0)
+- [YARA](https://github.com/VirusTotal/yara) (BSD-3-Clause), [signature-base](https://github.com/Neo23x0/signature-base), [YARA Forge](https://github.com/YARAHQ/yara-forge)
+
+**Threat intelligence** — VirusTotal, Hybrid Analysis, Triage, abuse.ch (MalwareBazaar / ThreatFox / URLHaus), AlienVault OTX, URLScan.io, Shodan, AbuseIPDB, GreyNoise, IPInfo, BGPView, NIST NVD, VulnCheck, Malpedia, Malshare
+
+**Pointers that shaped this toolkit** — [@duty_1g](https://x.com/duty_1g) (x64dbg MCP ecosystem), [@PINKSAWTOOTH](https://x.com/PINKSAWTOOTH) (Ghidra's adoption of [x64dbg-automate](https://github.com/dariushoule/x64dbg-automate) by Darius Houle), [@MalwareBibleJP](https://x.com/MalwareBibleJP) (PE-sieve). See [docs/20260824_x64dbg-mcp-evaluation.md](docs/20260824_x64dbg-mcp-evaluation.md).
 
 ## License
 
