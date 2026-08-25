@@ -337,6 +337,8 @@ malware-fetch(バイナリ取得) / forensic-analysis(不審EXE深掘り) / memo
 - **`yara-scan` / `capa` / `floss` / `pe-triage` / `pe-fallback-extract` はコンテナ内実行**: ホストパス・`.enc.gz`・`.zip`・コンテナ内絶対パス（`/tmp/...` `/analysis/...`）のいずれも直接渡せる。復号済みバイナリがホストに出ることはない（CLAUDE.md 準拠）
 - **`Sleep(大きな数値)` は単位要注意**: Rust の `Duration::from_nanos(800_000_000)` は 0.8 秒。静的解析で見た数値を秒単位と誤読しない。ProcMon の Process Start→Exit で実時間確認
 - **VMware 単一キー検知の典型**: `HKLM\SOFTWARE\VMware, Inc.\VMware Tools` RegOpenKey → 存在で即 exit する Rust マルウェアが多い。動的解析で 1 秒以内に exit するなら VM 検知を疑う
+- **Ghidra 12.1 の `Debugger-agent-x64dbg` は headless から使えない**: TraceRmi ベースのデバッガ連携は GUI 前提で、`HeadlessAnalyzer` は `GhidraState(null, …)` を組み立てるため Debugger の tool が存在しない。x64dbg 連携が要る場面は静的側ではなく malware-sandbox 側で扱う（`tools/malware-sandbox/x64dbg_driver.py`。malware-sandbox スキルの「x64dbg 自動制御」節）
+- **Jython は 12.1 から opt-in Extension**: GP-6754 で同梱をやめ、GP-6826 で `support/jythonRun` も削除された。本 repo の Dockerfile は拡張を明示インストール済みなので `scripts/*.py`（Jython）はそのまま動くが、**素の公式イメージに差し替えると全ポストスクリプトが黙って動かなくなる**。なお Jython は実行のたび `scripts/ghidra_common$py.class` を bind mount 側に再生成する（`.gitignore` 済み）
 
 ## 注意
 - タイムアウト: 5分/ファイル、MAXMEM=4G

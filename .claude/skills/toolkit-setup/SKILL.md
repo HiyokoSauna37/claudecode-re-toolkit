@@ -81,6 +81,13 @@ Phase 0 の結果に基づき、未セットアップ項目をデフォルトで
 - **対話型**: `references/interactive-setup.md`
 - **一括型**: `references/batch-setup.md`
 
+**任意コンポーネント（既定のセットアップには含めない）**: x64dbg-automate による Level 3 デバッガ自動制御。
+ホスト側は Python **3.11+** と `pip install "x64dbg_automate==0.9.2"`（**必ず `==` でピン**）、
+ゲスト側はプラグイン `v0.8.1-ghost_fungus` の配置と `x64dbg.ini` への `[XAutomate] Mode=remote` 追記が要る。
+`.env` の `VM_X64DBG_HOST` / `VM_X64DBG_REQ_PORT` / `VM_X64DBG_PUB_PORT` を併せて設定する。
+手順は `tools/malware-sandbox/docs/VM-SETUP.md` の «Step 3.5»、検証は
+`python tools/malware-sandbox/x64dbg_driver.py --selftest`（VM 不要）。
+
 ## Examples
 
 ### 初回セットアップ（典型的な流れ）
