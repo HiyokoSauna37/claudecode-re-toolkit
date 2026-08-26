@@ -8,18 +8,32 @@ Claude Codeを利用したマルウェア解析ツールキット。
 ## Repository Structure
 
 ```
-cc-malware-toolkit/
-├── .claude/skills/          # Claude Code スキル定義
-│   ├── malware-fetch/        # Web安全アクセス＆フォレンジック
-│   ├── ghidra-headless/      # Ghidra静的解析（Docker）
-│   ├── malware-sandbox/      # VMware動的解析
-│   └── threat-intel/         # OSINT/脅威インテリ統合 (17 services)
+claudecode-re-toolkit/
+├── .claude/skills/              # Claude Code スキル定義
+│   ├── ghidra-headless/          # 静的解析（Ghidra Docker）
+│   │   └── references/           #   deep-static-analysis.md 等
+│   ├── malware-fetch/            # Web安全アクセス＆フォレンジック
+│   ├── malware-sandbox/          # VMware動的解析
+│   │   └── references/
+│   │       ├── guides/           #   操作手順 (post-execution-audit, x64dbg-mcp 等)
+│   │       └── knowledge/        #   マルウェア族情報 (vidar, donutloader 等)
+│   ├── threat-intel/             # OSINT/脅威インテリ統合 (17 services)
+│   └── toolkit-setup/            # 環境構築ガイド
 ├── tools/
-│   ├── malware-fetch/        # Proxy Web ツール本体
-│   ├── ghidra-headless/      # Ghidra Headless ツール本体
-│   ├── malware-sandbox/      # VMware Sandbox ツール本体
-│   └── threat-intel/         # 脅威インテリ統合 CLI (Python)
-└── reports/                  # 解析レポート出力先
+│   ├── ghidra-headless/          # Ghidra Headless (Docker + scripts/)
+│   ├── malware-fetch/            # Proxy Web (Go + Docker)
+│   ├── malware-sandbox/          # VMware Sandbox (sandbox.sh + guest-scripts/)
+│   ├── threat-intel/             # 脅威インテリ CLI (Python)
+│   ├── dotnet-decompiler/        # .NET デコンパイラ (Docker + ILSpy)
+│   ├── quarantine/               # Defender Quarantine 復号 (Go)
+│   ├── mergen/                   # Mergen スキャナ (Docker)
+│   └── gui-prototype/            # ツールキット GUI (Flask)
+├── reports/
+│   ├── campaigns/                # 解析レポート (.md)
+│   ├── screenshots/              # 証拠スクリーンショット (.png)
+│   └── writeups/                 # Zenn記事・評価文書
+└── notes/
+    └── bug_bounty/               # 脆弱性調査・PoC
 ```
 
 ## Setup
