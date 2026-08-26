@@ -9,9 +9,9 @@
 | スキル | 概要 | バックエンド |
 |--------|------|-------------|
 | **malware-fetch** | 悪性Webサイトへの安全なアクセス、C2プロファイリング、ClickFix検出、OTX/VT/MB/TF脅威インテリジェンス | Docker (Chromium + Playwright) |
-| **ghidra-headless** | Ghidra による自動静的解析（デコンパイル、インポート、文字列、YARA、CAPA、FLOSS、oletools、.NETデコンパイル）、8フェーズ `analyze-full` パイプライン（自動フォールバック付き）、ZIPアーカイブ対応、maldev手法検出 | Docker (Ghidra 12.0.3 + Kali/radare2 + ILSpy) |
-| **malware-sandbox** | VMware VM を使ったマルウェア動的解析（3段階アンパック、Frida DBI、FakeNet、DispatchLogger COM監視、dumpulator エミュレーション、sandbox-evasion / vm-detect 自己診断） | VMware Workstation |
-| **threat-intel** | 18 OSINT サービス統合 CLI（VT, HA, Triage, Bazaar, ThreatFox, OTX, URLHaus, URLScan.io, Shodan, AbuseIPDB, GreyNoise, IPInfo, BGPView, Whois/RDAP, NIST, VulnCheck, Malpedia, Malshare）。hash/IP の横断相関、IOC抽出（txt/pdf/eml/url, SSRF防御）、MITRE ATT&CK マッピング、HTML/PDF レポート | Python (requests + SQLite cache) |
+| **ghidra-headless** | Ghidra による自動静的解析（デコンパイル、インポート、文字列、YARA、CAPA、FLOSS、oletools、.NETデコンパイル）、8フェーズ `analyze-full` パイプライン（自動フォールバック付き）、ターゲットデコンパイル、深層静的解析（エンコードペイロード抽出、カーネルドライバ解析、Authenticode検証、PDB抽出）、ZIPアーカイブ対応、maldev手法検出 | Docker (Ghidra 12.1.3 + Kali/radare2 + ILSpy) |
+| **malware-sandbox** | VMware VM を使ったマルウェア動的解析（3段階アンパック、Frida DBI、FakeNet、x64dbg-automate MCPリモートデバッグ、DispatchLogger COM監視、dumpulator エミュレーション、実行後監査、C2キャプチャ） | VMware Workstation |
+| **threat-intel** | 17 OSINT サービス統合 CLI（VT, HA, Triage, Bazaar, ThreatFox, OTX, URLHaus, URLScan.io, Shodan, AbuseIPDB, GreyNoise, IPInfo, BGPView, Whois/RDAP, NIST, VulnCheck, Malpedia, Malshare）。hash/IP の横断相関、VT behaviorサンドボックス解析、IOC抽出（txt/pdf/eml/url, SSRF防御）、MITRE ATT&CK マッピング、HTML/PDF レポート | Python (requests + SQLite cache) |
 | **toolkit-setup** | .env作成、Dockerビルド、YARA/CAPA/FLOSS/oletools/dumpulator、VMware設定の対話型セットアップウィザード | — |
 
 ## アーキテクチャ
@@ -118,8 +118,8 @@ claude
 
 ツールキットの Web ベース GUI ダッシュボードを実験的に提供しています。Claude Code のサブプロセスによるチャットインターフェースで、リアルタイムのツール活動モニタリング、Quarantine ファイルブラウザ、レポートビューアなどを備えています。
 
-![GUI ダッシュボード](docs/gui-dashboard.png)
-![解析実行中](docs/gui-analysis.png)
+![GUI ダッシュボード](reports/screenshots/gui-dashboard.png)
+![解析実行中](reports/screenshots/gui-analysis.png)
 
 ```bash
 cd tools/gui-prototype
@@ -245,7 +245,7 @@ VMware Workstation VM 自動操作:
 
 **脅威インテリジェンス** — VirusTotal / Hybrid Analysis / Triage / abuse.ch（MalwareBazaar・ThreatFox・URLHaus）/ AlienVault OTX / URLScan.io / Shodan / AbuseIPDB / GreyNoise / IPInfo / BGPView / NIST NVD / VulnCheck / Malpedia / Malshare
 
-**本ツールキットの設計に影響を与えた情報提供** — [@duty_1g](https://x.com/duty_1g)（x64dbg MCP エコシステム）、[@PINKSAWTOOTH](https://x.com/PINKSAWTOOTH)（Ghidra が Darius Houle 氏の [x64dbg-automate](https://github.com/dariushoule/x64dbg-automate) を採用している点の指摘）、[@MalwareBibleJP](https://x.com/MalwareBibleJP)（PE-sieve）。評価の詳細は [docs/20260824_x64dbg-mcp-evaluation.md](docs/20260824_x64dbg-mcp-evaluation.md)。
+**本ツールキットの設計に影響を与えた情報提供** — [@duty_1g](https://x.com/duty_1g)（x64dbg MCP エコシステム）、[@PINKSAWTOOTH](https://x.com/PINKSAWTOOTH)（Ghidra が Darius Houle 氏の [x64dbg-automate](https://github.com/dariushoule/x64dbg-automate) を採用している点の指摘）、[@MalwareBibleJP](https://x.com/MalwareBibleJP)（PE-sieve）。評価の詳細は [reports/writeups/20260824_x64dbg-mcp-evaluation.md](reports/writeups/20260824_x64dbg-mcp-evaluation.md)。
 
 ## ライセンス
 

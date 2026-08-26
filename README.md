@@ -9,9 +9,9 @@ Reverse engineering & malware analysis toolkit for [Claude Code](https://claude.
 | Skill | Description | Backend |
 |-------|-------------|---------|
 | **malware-fetch** | Safe access to malicious websites with full forensic capture, C2 profiling, ClickFix detection, OTX/VT/MB/TF threat intel | Docker (Chromium + Playwright) |
-| **ghidra-headless** | Automated static analysis with Ghidra (decompile, imports, strings, YARA, CAPA, FLOSS, oletools, .NET decompile), 8-phase `analyze-full` pipeline with auto-fallback, ZIP archive support, maldev technique detection | Docker (Ghidra 12.0.3 + Kali/radare2 + ILSpy) |
-| **malware-sandbox** | Dynamic malware analysis with VMware VM (3-level unpacking, Frida DBI, FakeNet, DispatchLogger COM monitoring, dumpulator emulation, sandbox-evasion / vm-detect self-check) | VMware Workstation |
-| **threat-intel** | Unified OSINT client over 18 services (VT, HA, Triage, Bazaar, ThreatFox, OTX, URLHaus, URLScan.io, Shodan, AbuseIPDB, GreyNoise, IPInfo, BGPView, Whois/RDAP, NIST, VulnCheck, Malpedia, Malshare). Cross-service hash/IP correlation, IOC extract (txt/pdf/eml/url, SSRF defended), MITRE ATT&CK, HTML/PDF reports | Python (requests + SQLite cache) |
+| **ghidra-headless** | Automated static analysis with Ghidra (decompile, imports, strings, YARA, CAPA, FLOSS, oletools, .NET decompile), 8-phase `analyze-full` pipeline with auto-fallback, targeted decompilation, deep static analysis (encoded payload extraction, kernel driver analysis, Authenticode verification, PDB extraction), ZIP archive support, maldev technique detection | Docker (Ghidra 12.1.3 + Kali/radare2 + ILSpy) |
+| **malware-sandbox** | Dynamic malware analysis with VMware VM (3-level unpacking, Frida DBI, FakeNet, x64dbg-automate MCP remote debugging, DispatchLogger COM monitoring, dumpulator emulation, post-execution audit, C2 capture) | VMware Workstation |
+| **threat-intel** | Unified OSINT client over 17 services (VT, HA, Triage, Bazaar, ThreatFox, OTX, URLHaus, URLScan.io, Shodan, AbuseIPDB, GreyNoise, IPInfo, BGPView, Whois/RDAP, NIST, VulnCheck, Malpedia, Malshare). Cross-service hash/IP correlation, VT behavior sandbox analysis, IOC extract (txt/pdf/eml/url, SSRF defended), MITRE ATT&CK, HTML/PDF reports | Python (requests + SQLite cache) |
 | **toolkit-setup** | Interactive setup wizard for .env, Docker builds, YARA/CAPA/FLOSS/oletools/dumpulator, and VMware config | — |
 
 ## Architecture
@@ -29,7 +29,7 @@ Reverse engineering & malware analysis toolkit for [Claude Code](https://claude.
 │ • Downloads   │ • Strings     │ • FakeNet C2    │
 │ • VT/MB/TF/OTX│ • YARA/CAPA   │ • PE-sieve      │
 │ • AES encrypt │ • IOC extract │ • Memory dump   │
-│ • Tor support │ • Classify    │ • x64dbg        │
+│ • Tor support │ • Classify    │ • x64dbg MCP    │
 │ • C2 profiling│ • .NET decomp │ • DispatchLogger │
 │ • ClickFix    │ • ZIP support │ • COM monitor   │
 ├───────────────┴───────────────┴─────────────────┤
@@ -119,8 +119,8 @@ claude
 
 A web-based GUI dashboard is available as an experimental frontend for the toolkit. It provides a chat interface powered by Claude Code subprocess, with real-time tool activity monitoring, quarantine file browser, report viewer, and more.
 
-![GUI Dashboard](docs/gui-dashboard.png)
-![Analysis in Progress](docs/gui-analysis.png)
+![GUI Dashboard](reports/screenshots/gui-dashboard.png)
+![Analysis in Progress](reports/screenshots/gui-analysis.png)
 
 ```bash
 cd tools/gui-prototype
@@ -147,10 +147,13 @@ python server.py
 
 1. **Web Collection**: Use malware-fetch to safely visit malicious URLs and collect artifacts (encrypted into `Quarantine/`)
 2. **Static Analysis**: Run `ghidra.sh analyze-full` (supports raw PE, `.enc.gz`, and `--zip-password` ZIP archives) — 8-phase pipeline with auto-fallback (Phase 0-7: PE Triage → FLOSS → binary-viz → YARA → CAPA → Ghidra decompile → IOC extract → Classify; oletools auto-fires for Office documents; PE fallback auto-generates strings/imports if Ghidra fails)
-3. **Static → Dynamic Bridge**: `static_hints.py` reads the Ghidra output and emits ready-to-paste Frida hook targets, FakeNet rules, and Procmon filters for the next phase
-4. **Dynamic Analysis**: For packed/obfuscated samples, use malware-sandbox (`analyze` / `unpack auto` / `frida-analyze`)
-5. **Config Extraction**: After memdump, `dumpulator_extractor.py` emulates the dump on the host to pull C2 IOCs without re-running the malware
-6. **Re-analysis**: Analyze unpacked binaries with ghidra-headless for full decompilation
+3. **Deep Static Analysis**: Targeted decompilation of key functions, encoded payload extraction (multi-layer Base64/Hex decode), embedded PE analysis (kernel drivers, Authenticode verification, PDB path extraction)
+4. **Static → Dynamic Bridge**: `static_hints.py` reads the Ghidra output and emits ready-to-paste Frida hook targets, FakeNet rules, and Procmon filters for the next phase
+5. **Dynamic Analysis**: For packed/obfuscated samples, use malware-sandbox (`analyze` / `unpack auto` / `frida-analyze`). x64dbg-automate MCP for anti-VM bypass (function skip technique)
+6. **Post-Execution Audit**: `audit-security` / `audit-persistence` / `audit-infosteal` for before/after diff. `capture-c2` for TLS SNI domain collection
+7. **Config Extraction**: After memdump, `dumpulator_extractor.py` emulates the dump on the host to pull C2 IOCs without re-running the malware
+8. **Threat-Intel Correlation**: `correlate-hash` for multi-service lookup, `vt behavior` for sandbox verdict and framework identification (WinosStager, ValleyRAT, Terminator, etc.)
+9. **Re-analysis**: Analyze unpacked binaries with ghidra-headless for full decompilation
 
 ## Security
 
@@ -199,6 +202,9 @@ Docker-based Ghidra automation:
 - Analyzer + Reviewer agent team for quality-assured analysis sessions
 - Kali Linux container with radare2 for quick triage, entropy analysis, crypto detection, and binary diffing
 - **Go binary analysis**: Specialized workflow for Go-compiled malware (gopclntab-aware string extraction, module/symbol analysis). Go binaries have minimal PE imports but rich embedded strings recoverable via raw extraction
+- **Targeted decompilation** (`decompile_function.py`) — decompile specific functions by offset, name, or address range. Supports mixed specifiers (e.g. `0xc8d0 FUN_18000a8a0 0xc000-0xd000`)
+- **Wide string extraction** (`extract_string.py`) — extract full wide strings at arbitrary virtual addresses (for recovering encoded payloads truncated in strings output)
+- **Deep static analysis workflow** — multi-layer payload decoding (Base64→Base64→Hex→PE), kernel driver analysis, Authenticode signature verification, PDB path extraction, threat-intel hash correlation. See `references/deep-static-analysis.md`
 - Helper scripts: `lnk-parser.py` (LNK triage), `pe-encrypt.py` (.enc.gz generator for VM transfer), `chunk-extract.py` (.rdata embedded binary extraction), `pe_fallback_extract.py` (Ghidra-independent strings/imports for IOC pipeline), `binary_patcher.py` (anti-VM string neutralization)
 - Scripts volume-mounted for instant hot-reload (no Docker rebuild needed for script edits)
 - Automatic command logging — every `ghidra.sh` invocation appends to `tools/ghidra-headless/logs/YYYYMMDD_<target>.md`; review with `ghidra.sh log-show <binary>`
@@ -215,6 +221,9 @@ VMware Workstation VM automation:
 - **`static_hints.py`** — reads ghidra-headless output and emits Frida hook targets, FakeNet rules, Procmon filters, and recommended `sandbox.sh` commands (closes the static→dynamic feedback loop)
 - **`sandbox-evasion-check.exe`** — runs inside the VM to surface software-level analysis indicators (small disk, low RAM, recent uptime, analyst processes) that malware uses to bail
 - **`vm-detect-checker.exe`** — runs inside the VM to enumerate hardware-level VMware fingerprints (SMBIOS, ACPI, MAC OUI) that VMProtect/Themida key off
+- **x64dbg-automate MCP** — remote debugging via ZeroMQ. Function skip bypass for anti-VM checks, breakpoint management, register manipulation. See guides/x64dbg-mcp-guide.md for operational details
+- **Post-execution audit** (`audit-security`, `audit-persistence`, `audit-infosteal`) — JSON-based before/after diff of Defender state, registry persistence, browser credential access, and TEMP file creation (5-min window)
+- **C2 capture** (`capture-c2`) — automated NAT + TLS SNI monitoring + malware execution + result collection + network re-isolation cycle
 - `regshot_diff.py` for pre/post registry diffing
 - Network isolation management
 - Comprehensive guest tool suite (x64dbg, PE-sieve, HollowsHunter, mal_unpack, etc.)
@@ -246,7 +255,7 @@ This toolkit orchestrates excellent third-party tools. Their authors deserve the
 
 **Threat intelligence** — VirusTotal, Hybrid Analysis, Triage, abuse.ch (MalwareBazaar / ThreatFox / URLHaus), AlienVault OTX, URLScan.io, Shodan, AbuseIPDB, GreyNoise, IPInfo, BGPView, NIST NVD, VulnCheck, Malpedia, Malshare
 
-**Pointers that shaped this toolkit** — [@duty_1g](https://x.com/duty_1g) (x64dbg MCP ecosystem), [@PINKSAWTOOTH](https://x.com/PINKSAWTOOTH) (Ghidra's adoption of [x64dbg-automate](https://github.com/dariushoule/x64dbg-automate) by Darius Houle), [@MalwareBibleJP](https://x.com/MalwareBibleJP) (PE-sieve). See [docs/20260824_x64dbg-mcp-evaluation.md](docs/20260824_x64dbg-mcp-evaluation.md).
+**Pointers that shaped this toolkit** — [@duty_1g](https://x.com/duty_1g) (x64dbg MCP ecosystem), [@PINKSAWTOOTH](https://x.com/PINKSAWTOOTH) (Ghidra's adoption of [x64dbg-automate](https://github.com/dariushoule/x64dbg-automate) by Darius Houle), [@MalwareBibleJP](https://x.com/MalwareBibleJP) (PE-sieve). See [reports/writeups/20260824_x64dbg-mcp-evaluation.md](reports/writeups/20260824_x64dbg-mcp-evaluation.md).
 
 ## License
 
