@@ -142,7 +142,7 @@ Claude に対話的にデバッガを叩かせたい場合のみ。優先順:
 ### 5.2 アンチデバッグ的な副作用
 
 `connect(127.0.0.1, 9094)` が成功するかどうかは、**アロケーションも PEB も触らない極めて安定したデバッガ検出**になる。既定ポート（9094/9095、50300、27066/27067）は各 README に公開されている。
-`references/anti-debug-knowledge.md` の既存バイパス（`IsDebuggerPresent` を `31 C0 C3` に、`NtQueryInformationProcess` をトランポリン）は**ソケットプローブを一切カバーしない**。つまり MCP 導入は、既存の回避策では潰せない新しい検出経路を自分で追加することになる。
+`references/knowledge/anti-debug-knowledge.md` の既存バイパス（`IsDebuggerPresent` を `31 C0 C3` に、`NtQueryInformationProcess` をトランポリン）は**ソケットプローブを一切カバーしない**。つまり MCP 導入は、既存の回避策では潰せない新しい検出経路を自分で追加することになる。
 
 ### 5.3 プロンプトインジェクション（本リポジトリでは特に重い）
 

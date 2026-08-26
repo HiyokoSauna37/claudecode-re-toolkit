@@ -163,7 +163,7 @@ Phase 0 の結果に基づき、未セットアップ項目をデフォルトで
 解決:
 1. VMRUN_PATH が正しいか確認
 2. VMware Workstation を起動してから再実行
-3. 詳細は references/troubleshooting.md（malware-sandbox スキル）を参照
+3. 詳細は references/guides/troubleshooting.md（malware-sandbox スキル）を参照
 ```
 
 ### .env の既存値を上書きしてしまった
