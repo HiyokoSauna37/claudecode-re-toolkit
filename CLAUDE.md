@@ -17,7 +17,7 @@ claudecode-re-toolkit/
 │   │   └── references/
 │   │       ├── guides/           #   操作手順 (post-execution-audit, x64dbg-mcp 等)
 │   │       └── knowledge/        #   マルウェア族情報 (vidar, donutloader 等)
-│   ├── threat-intel/             # OSINT/脅威インテリ統合 (17 services)
+│   ├── threat-intel/             # OSINT/脅威インテリ統合 (18 services)
 │   └── toolkit-setup/            # 環境構築ガイド
 ├── tools/
 │   ├── ghidra-headless/          # Ghidra Headless (Docker + scripts/)
@@ -44,7 +44,7 @@ claudecode-re-toolkit/
 - [Claude Code](https://claude.com/claude-code) がインストール済み
 - Docker Desktop がインストール・起動済み
 - [VMware Workstation Pro](https://www.vmware.com/products/desktop-hypervisor/workstation-and-fusion)（malware-sandboxスキルに必要、vmrun CLI利用）
-- Go 1.21+ （Go版ツールのビルド用）
+- Go 1.26+ （Go版ツールをソースからビルドする場合のみ。ビルド済み `.exe` は同梱）
 - Python 3.10+
 
 ### 環境変数
@@ -88,7 +88,7 @@ Ghidra Headless AnalyzerをDockerコンテナで実行し、バイナリの静�
 VMware Workstation上のWindows VMをvmrun CLIで操作し、マルウェアの動的解析を実行。3-Level Unpacking System（memdump-racer / TinyTracer / mal_unpack）、Frida DBI、FakeNet-NGによるC2通信キャプチャに対応。
 
 ### threat-intel
-17 OSINTサービス統合CLI（VirusTotal / Hybrid Analysis / Triage / MalwareBazaar / ThreatFox / OTX / URLHaus / URLScan.io / Shodan / AbuseIPDB / GreyNoise / IPInfo / BGPView / Whois/RDAP / NIST NVD / VulnCheck / Malpedia / Malshare）。`correlate-hash` / `correlate-ip` で複数サービス横断問合せ、IOC抽出（pdf/eml/url, SSRF防御）、MITRE ATT&CK マッピング、HTML/PDFレポート対応。
+18 OSINTサービス統合CLI（VirusTotal / Hybrid Analysis / Triage / MalwareBazaar / ThreatFox / OTX / URLHaus / URLScan.io / Shodan / AbuseIPDB / GreyNoise / IPInfo / BGPView / Whois/RDAP / NIST NVD / VulnCheck / Malpedia / Malshare）。`correlate-hash` / `correlate-ip` で複数サービス横断問合せ、IOC抽出（pdf/eml/url, SSRF防御）、MITRE ATT&CK マッピング、HTML/PDFレポート対応。
 
 ## Analysis Workflow
 

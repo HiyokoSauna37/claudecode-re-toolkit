@@ -336,12 +336,36 @@ func metadata(scriptDir, binaryPath string) error {
 	basename := filepath.Base(containerPath)
 	fmt.Printf("=== .NET Metadata: %s ===\n", basename)
 
-	// List references
-	out, err := dockerExec("ilspycmd", "--list", containerPath)
-	if err != nil {
-		return fmt.Errorf("ilspycmd --list failed: %s", out)
+	// Dump the metadata tables that identify the assembly and what it pulls in.
+	// NOTE: do NOT use `--list <path>` here -- `-l|--list` takes entity-type
+	// letters (c/i/s/d/e), so passing a path makes ilspycmd swallow it as the
+	// option value and bail with "The Assembly file name(s) field is required."
+	// (true in 8.2 as well as 11.x). Entity listing lives in `list-types`.
+	sections := []struct {
+		title string
+		args  []string
+	}{
+		{"Assembly", []string{"--dump-table", "Assembly"}},
+		{"AssemblyRef (referenced assemblies)", []string{"--dump-table", "AssemblyRef"}},
+		{"ModuleRef (native P/Invoke modules)", []string{"--dump-table", "ModuleRef"}},
+		{"Embedded resources", []string{"--list-resources"}},
 	}
-	fmt.Println(out)
+
+	var report strings.Builder
+	for _, s := range sections {
+		args := append([]string{"ilspycmd"}, s.args...)
+		out, err := dockerExec(append(args, containerPath)...)
+		if err != nil {
+			return fmt.Errorf("ilspycmd %s failed: %s", strings.Join(s.args, " "), out)
+		}
+		body := strings.TrimSpace(out)
+		if body == "" {
+			body = "(none)"
+		}
+		report.WriteString(fmt.Sprintf("--- %s ---\n%s\n\n", s.title, body))
+	}
+	out := report.String()
+	fmt.Print(out)
 
 	// Save to file
 	outFile := filepath.Join(scriptDir, "output", basename+"_metadata.txt")
@@ -371,9 +395,11 @@ func listTypes(scriptDir, binaryPath string) error {
 		return fmt.Errorf("ilspycmd failed: %s", out)
 	}
 
-	// Extract class/struct/enum definitions
+	// Extract class/struct/enum definitions.
+	// The image is Alpine, so grep is BusyBox: it has no --include. Filter the
+	// file list with find instead of asking grep to do it.
 	grepOut, _ := dockerExec("bash", "-c",
-		fmt.Sprintf("grep -rn 'class \\|struct \\|enum \\|interface ' %s --include='*.cs' | head -200", tmpDir))
+		fmt.Sprintf("find %s -name '*.cs' -print0 | xargs -0 grep -n 'class \\|struct \\|enum \\|interface ' | head -200", tmpDir))
 	fmt.Println(grepOut)
 
 	// Cleanup temp

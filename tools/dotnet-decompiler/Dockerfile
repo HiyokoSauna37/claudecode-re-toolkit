@@ -1,13 +1,10 @@
-FROM mcr.microsoft.com/dotnet/sdk:8.0-alpine
+FROM mcr.microsoft.com/dotnet/sdk:10.0-alpine
 
-# Install .NET 6.0 runtime (required by ilspycmd 8.x)
-RUN dotnet_version=6.0.36 && \
-    wget -O dotnet6.tar.gz "https://dotnetcli.azureedge.net/dotnet/Runtime/$dotnet_version/dotnet-runtime-$dotnet_version-linux-musl-x64.tar.gz" && \
-    tar -xzf dotnet6.tar.gz -C /usr/share/dotnet && \
-    rm dotnet6.tar.gz
-
-# Install ILSpy CLI (ilspycmd)
-RUN dotnet tool install --global ilspycmd --version 8.2.0.7535
+# Install ILSpy CLI (ilspycmd).
+# Pinned deliberately: ilspycmd 11.x targets net10.0, which is why the base image
+# is the 10.0 SDK. Older 8.x builds targeted net6.0 and needed a side-loaded
+# .NET 6 runtime -- that hack is gone. Bump the base image together with this pin.
+RUN dotnet tool install --global ilspycmd --version 11.0.0.9375
 
 # Install Python3 for decrypt_quarantine.py
 RUN apk add --no-cache python3 py3-pip py3-cryptography bash && \

@@ -206,7 +206,7 @@ capa --version
 [OK] ghidra-headless     コンテナ実行中 (Up 2 minutes)
 [OK] YARA rules          ダウンロード済み
 [OK] yara-python         v4.x.x
-[OK] flare-capa          v7.x.x
+[OK] flare-capa          v9.x.x
 [OK] VMware Sandbox      接続確認済み (snapshot: clean_with_tools)
 
 次のステップ:

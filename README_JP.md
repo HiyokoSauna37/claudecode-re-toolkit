@@ -11,7 +11,7 @@
 | **malware-fetch** | 悪性Webサイトへの安全なアクセス、C2プロファイリング、ClickFix検出、OTX/VT/MB/TF脅威インテリジェンス | Docker (Chromium + Playwright) |
 | **ghidra-headless** | Ghidra による自動静的解析（デコンパイル、インポート、文字列、YARA、CAPA、FLOSS、oletools、.NETデコンパイル）、8フェーズ `analyze-full` パイプライン（自動フォールバック付き）、ターゲットデコンパイル、深層静的解析（エンコードペイロード抽出、カーネルドライバ解析、Authenticode検証、PDB抽出）、ZIPアーカイブ対応、maldev手法検出 | Docker (Ghidra 12.1.3 + Kali/radare2 + ILSpy) |
 | **malware-sandbox** | VMware VM を使ったマルウェア動的解析（3段階アンパック、Frida DBI、FakeNet、x64dbg-automate MCPリモートデバッグ、DispatchLogger COM監視、dumpulator エミュレーション、実行後監査、C2キャプチャ） | VMware Workstation |
-| **threat-intel** | 17 OSINT サービス統合 CLI（VT, HA, Triage, Bazaar, ThreatFox, OTX, URLHaus, URLScan.io, Shodan, AbuseIPDB, GreyNoise, IPInfo, BGPView, Whois/RDAP, NIST, VulnCheck, Malpedia, Malshare）。hash/IP の横断相関、VT behaviorサンドボックス解析、IOC抽出（txt/pdf/eml/url, SSRF防御）、MITRE ATT&CK マッピング、HTML/PDF レポート | Python (requests + SQLite cache) |
+| **threat-intel** | 18 OSINT サービス統合 CLI（VT, HA, Triage, Bazaar, ThreatFox, OTX, URLHaus, URLScan.io, Shodan, AbuseIPDB, GreyNoise, IPInfo, BGPView, Whois/RDAP, NIST, VulnCheck, Malpedia, Malshare）。hash/IP の横断相関、VT behaviorサンドボックス解析、IOC抽出（txt/pdf/eml/url, SSRF防御）、MITRE ATT&CK マッピング、HTML/PDF レポート | Python (requests + SQLite cache) |
 | **toolkit-setup** | .env作成、Dockerビルド、YARA/CAPA/FLOSS/oletools/dumpulator、VMware設定の対話型セットアップウィザード | — |
 
 ## アーキテクチャ
@@ -47,6 +47,7 @@
 - [Claude Code](https://claude.com/claude-code) インストール済み
 - Docker Desktop 起動済み
 - [VMware Workstation Pro](https://www.vmware.com/products/desktop-hypervisor/workstation-and-fusion)（malware-sandbox スキルに必要、vmrun CLI 利用）
+- Go 1.26+ （Go版ツールをソースからビルドする場合のみ。ビルド済み `.exe` は同梱）
 - Python 3.10+
 
 ### セットアップ

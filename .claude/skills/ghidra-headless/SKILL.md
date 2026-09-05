@@ -163,7 +163,7 @@ Ghidra でデコンパイルする前に .NET バイナリかチェック。3つ
 
 .NET 確定 → `ghidra.sh decompile` はスキップし `ghidra.sh dotnet-decompile <binary>` を使う（Ghidra のデコンパイラは CLR を認識できない）。
 
-**構成**: `tools/dotnet-decompiler/dotnet-decompile.exe`（Go ラッパー）が docker compose 経由で `dotnet-decompiler` コンテナを起動し、コンテナ内で ILSpy CLI (`ilspycmd` 8.2) を実行する。`.enc.gz` はコンテナ内で `decrypt_quarantine.py` により復号 → ILSpy 解析 → output volume (`./output`) でホストに回収。
+**構成**: `tools/dotnet-decompiler/dotnet-decompile.exe`（Go ラッパー）が docker compose 経由で `dotnet-decompiler` コンテナを起動し、コンテナ内で ILSpy CLI (`ilspycmd` 11.0) を実行する。`.enc.gz` はコンテナ内で `decrypt_quarantine.py` により復号 → ILSpy 解析 → output volume (`./output`) でホストに回収。
 
 初回セットアップ:
 ```bash
