@@ -110,3 +110,8 @@ Thumbs.db
 /mitre.json
 /tmp_*.py
 tmp_*.py
+
+# Android Sandbox
+tools/android-sandbox/input/
+tools/android-sandbox/output/
+tools/android-sandbox/logs/

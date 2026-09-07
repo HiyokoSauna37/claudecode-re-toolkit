@@ -17,9 +17,14 @@ claudecode-re-toolkit/
 │   │   └── references/
 │   │       ├── guides/           #   操作手順 (post-execution-audit, x64dbg-mcp 等)
 │   │       └── knowledge/        #   マルウェア族情報 (vidar, donutloader 等)
+│   ├── android-sandbox/           # Android動的解析（SDK Emulator + Frida + CDP）
+│   │   └── references/
+│   │       ├── guides/           #   セットアップ、Frida、CDP手順
+│   │       └── knowledge/        #   NMMPパッカー等のナレッジ
 │   ├── threat-intel/             # OSINT/脅威インテリ統合 (18 services)
 │   └── toolkit-setup/            # 環境構築ガイド
 ├── tools/
+│   ├── android-sandbox/          # Android Sandbox (SDK Emulator + Frida scripts)
 │   ├── ghidra-headless/          # Ghidra Headless (Docker + scripts/)
 │   ├── malware-fetch/            # Proxy Web (Go + Docker)
 │   ├── malware-sandbox/          # VMware Sandbox (sandbox.sh + guest-scripts/)
@@ -76,6 +81,13 @@ docker compose -f tools/ghidra-headless/docker-compose.yml up -d
 
 [tools/malware-sandbox/docs/VM-SETUP.md](tools/malware-sandbox/docs/VM-SETUP.md) を参照してVM環境を構築。
 
+#### android-sandbox（Android SDK必須）
+
+```bash
+# Android SDK cmdline-tools をダウンロードし、.env の ANDROID_SDK_PATH を設定
+# 詳細は .claude/skills/android-sandbox/SKILL.md の「前提条件」を参照
+```
+
 ## Skills
 
 ### malware-fetch
@@ -85,19 +97,33 @@ docker compose -f tools/ghidra-headless/docker-compose.yml up -d
 Ghidra Headless AnalyzerをDockerコンテナで実行し、バイナリの静的解析（インポート分析、文字列抽出、デコンパイル、YARA/CAPA/IOC抽出、マルウェア分類）を自動化。
 
 ### malware-sandbox
-VMware Workstation上のWindows VMをvmrun CLIで操作し、マルウェアの動的解析を実行。3-Level Unpacking System（memdump-racer / TinyTracer / mal_unpack）、Frida DBI、FakeNet-NGによるC2通信キャプチャに対応。
+VMware Workstation上のWindows VMをvmrun CLIで操作し、Windows PEマルウェアの動的解析を実行。3-Level Unpacking System（memdump-racer / TinyTracer / mal_unpack）、Frida DBI、FakeNet-NGによるC2通信キャプチャに対応。
+
+### android-sandbox
+Android SDK エミュレータ上でAPKマルウェアの動的解析を実行。Frida serverによるランタイムフック（DEXダンプ、API監視）、CDP（Chrome DevTools Protocol）によるWebViewインスペクション、logcat/ネットワーク監視に対応。NMMPパッカー等で保護されたAPKのランタイムアンパックに対応。
 
 ### threat-intel
 18 OSINTサービス統合CLI（VirusTotal / Hybrid Analysis / Triage / MalwareBazaar / ThreatFox / OTX / URLHaus / URLScan.io / Shodan / AbuseIPDB / GreyNoise / IPInfo / BGPView / Whois/RDAP / NIST NVD / VulnCheck / Malpedia / Malshare）。`correlate-hash` / `correlate-ip` で複数サービス横断問合せ、IOC抽出（pdf/eml/url, SSRF防御）、MITRE ATT&CK マッピング、HTML/PDFレポート対応。
 
 ## Analysis Workflow
 
+### Windows PE マルウェア
 ```
 1. malware-fetch でURLアクセス → バイナリ取得（暗号化）
 2. ghidra-headless で静的解析 → パッカー/ファミリー判定
 3. パック済み or 静的解析限界 → malware-sandbox で動的解析
 4. アンパック後バイナリ → ghidra-headless で再解析
 5. 平行: threat-intel で hash/IP/URL/CVE を相関問合せ → 帰属判定
+```
+
+### Android APK マルウェア
+```
+1. malware-fetch でフィッシングURL → APK取得（暗号化）
+2. android-sandbox apk-triage で静的トリアージ → パッカー/権限/JNI文字列
+3. ghidra-headless で native lib (.so) 解析 → パッカー内部構造
+4. android-sandbox でエミュレータ動的解析 → logcat/CDP/Frida
+5. NMMPパッカー → frida-dump-dex でランタイムDEXダンプ → jadx/Ghidra再解析
+6. 平行: threat-intel で hash/IP/URL を相関問合せ → 帰属判定
 ```
 
 ## Security Notes
