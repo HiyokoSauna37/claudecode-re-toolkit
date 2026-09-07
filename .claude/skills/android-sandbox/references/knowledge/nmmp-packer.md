@@ -66,6 +66,32 @@ bash tools/android-sandbox/android-sandbox.sh frida-dump-dex <package>
 - パッケージ名: `org.mega.fast.snap`
 - バージョン: 2.9.74
 - 暗号化アセット 2 本（各 11.9MB、異なるハッシュ）
-- JSブリッジ: `window.Android.getDeviceId()` のみ確認
-- VT 検出率: 0/75（楽天版）/ 7/75（ANA版）
-- エミュレータ検知: GPS ポーリング + `isSandboxEnvironment` で動作制限
+- JSブリッジ: `window.Android.getDeviceId()` のみ確認（class: `b2.n`）
+- VT 検出率: 0/75（楽天版）/ 7/75（ANA版）/ 5/75（セゾン版）
+- エミュレータ検知: GPS ポーリング + `isSandboxEnvironment` + ファイル存在チェック（`/dev/qemu_pipe`, `/dev/goldfish_pipe`）+ SystemProperties（`ro.kernel.qemu`）
+
+### DEX ダンプ結果
+
+`InMemoryDexClassLoader` / `DexClassLoader` / `PathClassLoader` のフックで **0 件**。
+NMMP は Java レベルの ClassLoader を経由せず、**ネイティブコード（libnmmvm.so の vmInterpret）内で直接 DEX バイトコードを解釈実行**する。
+標準的な Frida DEX ダンプ手法では捕まらない。
+
+対処:
+- CDP + logcat で通信先を直接監視（C2/URL は動的に取得されるため通信時に見える）
+- Frida で `Cipher.doFinal` / `Base64.decode` をフック → 復号された通信内容を傍受
+- `bypass_root_detect.js` でエミュレータ検知をバイパスすると WebView は正常動作する
+
+### Frida バイパスで判明したエミュレータ検知項目
+
+```
+[File.exists] /dev/socket/qemud
+[File.exists] /dev/qemu_pipe
+[File.exists] /dev/goldfish_pipe
+[File.exists] /system/lib/libc_malloc_debug_qemu.so
+[File.exists] /sys/qemu_trace
+[File.exists] /system/bin/qemu-props
+[SystemProperties] ro.kernel.qemu = 1
+[SystemProperties] qemu.hw.mainkeys = 0
+[SystemProperties] qemu.sf.lcd_density = 420
+[SystemProperties] init.svc.qemu-props = stopped
+```

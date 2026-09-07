@@ -253,10 +253,66 @@ NMMP 等のパッカーが復号した DEX をメモリからダンプ。
 ## 注意事項
 
 - **Frida server とクライアントのバージョンは完全一致が必要**。不一致だと接続時にエラー
-- **Python 3.10 では Frida が動かない**（`NotRequired` import エラー）。3.11+ を使用
-- **エミュレータのサンドボックス検知**: マルウェアがエミュレータを検知して動作を制限することがある。`isSandboxEnvironment` 等の文字列が見つかった場合は `bypass_root_detect.js` を使用
+- **Python 3.10 では Frida 17.x が動かない**（`NotRequired` import エラー）。対策: Python 3.11+ にするか、`pip install "frida==16.5.6" "frida-tools==12.5.0"` で 3.10 対応版を使う
+- **`adb root` が必須**: frida-server は root 権限で動かす必要がある。`adb root` を実行してから `adb push` + 起動。shell ユーザーだと `unable to find process with name 'system_server'` エラーになる
+- **Frida spawn が `system_server` エラーで失敗する場合**: frida-server が shell ユーザーで動いている。`adb root` → frida-server 再起動で解決
+- **エミュレータのサンドボックス検知**: マルウェアがエミュレータを検知して動作を制限することがある。`isSandboxEnvironment` 等の文字列が見つかった場合は `bypass_root_detect.js` を使用。検知項目の実例: `/dev/socket/qemud`, `/dev/qemu_pipe`, `/dev/goldfish_pipe`, `ro.kernel.qemu`, `qemu.sf.lcd_density`
+- **NMMP パッカーの DEX ダンプが 0 件になる場合**: NMMP は `InMemoryDexClassLoader` を使わず、ネイティブコード内で独自に DEX をロードする。`dump_dex.js` の Java レベルフックでは捕まらない。この場合は CDP + logcat で C2/通信先を直接監視する方が有効
 - **VMware との排他**: エミュレータ起動中は VMware VM の同時起動を避ける（VT-x 競合の可能性）
 - **ホスト上の復号ファイル**: APK の復号は一時的にホスト上にファイルが存在する。`adb install` 完了後に即削除すること
+- **CDP の「次へ」ボタン**: 楽天等の React SPA では「次へ」が `<button>` ではなく `<div>` の場合がある。`document.querySelectorAll('button')` で見つからない場合は XPath (`//*[contains(text(),"次")]`) で検索
+
+## 2026-09 解析事例: 楽天偽装 APK での知見
+
+### 判明した手順
+
+```bash
+# 1. 静的トリアージ
+$AS apk-triage sample.apk.enc.gz
+# → NMMP パッカー確定、パッケージ名 org.mega.fast.snap、権限5つのみ
+
+# 2. エミュレータ起動 + インストール
+$AS start --gui
+$AS install sample.apk.enc.gz
+
+# 3. Frida バイパス (adb root 必須!)
+adb root                          # ← これがないと frida-server が動かない
+$AS frida-setup
+frida -U -l bypass_root_detect.js -l hook_webview.js -f org.mega.fast.snap
+# → エミュレータ検知バイパス成功
+# → WebView.loadUrl: https://login.account.rakuten.com/... をキャプチャ
+# → addJavascriptInterface: Android (class b2.n) getDeviceId をキャプチャ
+
+# 4. CDP でログインフローを進行
+$AS cdp-inspect org.mega.fast.snap
+# → タイトル: "ログイン - 楽天"、URL: login.account.rakuten.com (正規)
+# → JSブリッジ: window.Android.getDeviceId() → "f9a750dfebf73447"
+
+$AS cdp-eval org.mega.fast.snap "<ユーザーID入力のJS>"
+$AS cdp-eval org.mega.fast.snap "<パスワード入力のJS>"
+# 注意: 「次へ」ボタンは <div> なので XPath で検索
+
+# 5. CDP ネットワーク監視でPOSTキャプチャ
+$AS cdp-monitor org.mega.fast.snap 45
+# → POST /v2/login/start → user_id が平文で見える
+# → POST /v2/login/complete → user_key (パスワード) が平文で見える
+# → マルウェアの WebViewClient.shouldInterceptRequest() で傍受可能
+
+# 6. NMMP DEX ダンプは失敗（NMMPは独自ローダーを使用）
+$AS frida-dump-dex org.mega.fast.snap
+# → 0件。InMemoryDexClassLoader を経由しないため
+```
+
+### 解析で判明した事実
+
+| 項目 | 結果 |
+|---|---|
+| WebView 表示先 | 楽天の正規 SSO (`login.account.rakuten.com`) |
+| JS ブリッジ | `window.Android.getDeviceId()` (class: `b2.n`) |
+| 通信先 | Akamai CDN (楽天正規サーバー) のみ |
+| C2 / VPN | エミュレータ検知バイパス後も未発動 |
+| エミュレータ検知 | qemud/goldfish/qemu_pipe + SystemProperties |
+| NMMP DEX ダンプ | 不可（ネイティブ独自ローダー） |
 
 ## 関連スキル連携
 
