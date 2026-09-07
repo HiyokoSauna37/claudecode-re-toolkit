@@ -11,6 +11,7 @@
 | **malware-fetch** | 悪性Webサイトへの安全なアクセス、C2プロファイリング、ClickFix検出、OTX/VT/MB/TF脅威インテリジェンス | Docker (Chromium + Playwright) |
 | **ghidra-headless** | Ghidra による自動静的解析（デコンパイル、インポート、文字列、YARA、CAPA、FLOSS、oletools、.NETデコンパイル）、8フェーズ `analyze-full` パイプライン（自動フォールバック付き）、ターゲットデコンパイル、深層静的解析（エンコードペイロード抽出、カーネルドライバ解析、Authenticode検証、PDB抽出）、ZIPアーカイブ対応、maldev手法検出 | Docker (Ghidra 12.1.3 + Kali/radare2 + ILSpy) |
 | **malware-sandbox** | VMware VM を使ったマルウェア動的解析（3段階アンパック、Frida DBI、FakeNet、x64dbg-automate MCPリモートデバッグ、DispatchLogger COM監視、dumpulator エミュレーション、実行後監査、C2キャプチャ） | VMware Workstation |
+| **android-sandbox** | Android SDK エミュレータを使った APK 動的解析（Frida ランタイムフック、CDP WebView インスペクション、NMMP 等パッカーの DEX ダンプ、logcat 監視、エミュレータ検知バイパス） | Android SDK Emulator |
 | **threat-intel** | 18 OSINT サービス統合 CLI（VT, HA, Triage, Bazaar, ThreatFox, OTX, URLHaus, URLScan.io, Shodan, AbuseIPDB, GreyNoise, IPInfo, BGPView, Whois/RDAP, NIST, VulnCheck, Malpedia, Malshare）。hash/IP の横断相関、VT behaviorサンドボックス解析、IOC抽出（txt/pdf/eml/url, SSRF防御）、MITRE ATT&CK マッピング、HTML/PDF レポート | Python (requests + SQLite cache) |
 | **toolkit-setup** | .env作成、Dockerビルド、YARA/CAPA/FLOSS/oletools/dumpulator、VMware設定の対話型セットアップウィザード | — |
 
@@ -21,18 +22,18 @@
 │                  Claude Code                     │
 │              (AI駆動オーケストレーション)           │
 ├───────────────┬───────────────┬─────────────────┤
-│  malware-fetch    │ ghidra-headless│ malware-sandbox  │
-│  (Docker)     │  (Docker)     │  (VMware VM)    │
-├───────────────┼───────────────┼─────────────────┤
-│ • スクリーンショット│ • デコンパイル │ • アンパック    │
-│ • HTML保存    │ • インポート   │ • Frida DBI     │
-│ • ダウンロード │ • 文字列抽出   │ • FakeNet C2    │
-│ • VT/MB/TF/OTX│ • YARA/CAPA   │ • PE-sieve      │
-│ • AES暗号化   │ • IOC抽出     │ • メモリダンプ   │
-│ • Tor対応     │ • 自動分類     │ • x64dbg        │
-│ • C2プロファイル│ • .NETデコンパイル│ • DispatchLogger│
-│ • ClickFix検出│ • ZIP対応     │ • COM監視       │
-├───────────────┴───────────────┴─────────────────┤
+│  malware-fetch │ ghidra-headless│ malware-sandbox │android-sandbox│
+│  (Docker)      │  (Docker)      │  (VMware VM)    │(SDK Emulator) │
+├────────────────┼────────────────┼─────────────────┼───────────────┤
+│ • スクリーンショット│ • デコンパイル│ • アンパック    │ • APKトリアージ│
+│ • HTML保存     │ • インポート   │ • Frida DBI     │ • Fridaフック  │
+│ • ダウンロード │ • 文字列抽出   │ • FakeNet C2    │ • CDP WebView │
+│ • VT/MB/TF/OTX │ • YARA/CAPA    │ • PE-sieve      │ • DEXダンプ   │
+│ • AES暗号化    │ • IOC抽出      │ • メモリダンプ  │ • logcat      │
+│ • Tor対応      │ • 自動分類     │ • x64dbg        │ • 検知バイパス│
+│ • C2プロファイル│ • .NETデコンパイル│ • DispatchLogger│              │
+│ • ClickFix検出 │ • ZIP対応      │ • COM監視       │               │
+├────────────────┴────────────────┴─────────────────┴───────────────┤
 │             threat-intel (Python)                │
 │  VT • HA • Triage • Bazaar • ThreatFox • OTX   │
 │  URLHaus • Shodan • AbuseIPDB • GreyNoise • ... │
@@ -47,8 +48,9 @@
 - [Claude Code](https://claude.com/claude-code) インストール済み
 - Docker Desktop 起動済み
 - [VMware Workstation Pro](https://www.vmware.com/products/desktop-hypervisor/workstation-and-fusion)（malware-sandbox スキルに必要、vmrun CLI 利用）
+- Android SDK cmdline-tools（android-sandbox スキル — APK 解析用、オプション）
 - Go 1.26+ （Go版ツールをソースからビルドする場合のみ。ビルド済み `.exe` は同梱）
-- Python 3.10+
+- Python 3.10+（Frida によるAndroid解析は 3.11+ 必須）
 
 ### セットアップ
 

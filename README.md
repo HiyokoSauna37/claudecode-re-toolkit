@@ -11,6 +11,7 @@ Reverse engineering & malware analysis toolkit for [Claude Code](https://claude.
 | **malware-fetch** | Safe access to malicious websites with full forensic capture, C2 profiling, ClickFix detection, OTX/VT/MB/TF threat intel | Docker (Chromium + Playwright) |
 | **ghidra-headless** | Automated static analysis with Ghidra (decompile, imports, strings, YARA, CAPA, FLOSS, oletools, .NET decompile), 8-phase `analyze-full` pipeline with auto-fallback, targeted decompilation, deep static analysis (encoded payload extraction, kernel driver analysis, Authenticode verification, PDB extraction), ZIP archive support, maldev technique detection | Docker (Ghidra 12.1.3 + Kali/radare2 + ILSpy) |
 | **malware-sandbox** | Dynamic malware analysis with VMware VM (3-level unpacking, Frida DBI, FakeNet, x64dbg-automate MCP remote debugging, DispatchLogger COM monitoring, dumpulator emulation, post-execution audit, C2 capture) | VMware Workstation |
+| **android-sandbox** | Android APK dynamic analysis with SDK emulator (Frida runtime hooks, CDP WebView inspection, DEX dumping for NMMP/packer unpacking, logcat monitoring, anti-emulator bypass) | Android SDK Emulator |
 | **threat-intel** | Unified OSINT client over 18 services (VT, HA, Triage, Bazaar, ThreatFox, OTX, URLHaus, URLScan.io, Shodan, AbuseIPDB, GreyNoise, IPInfo, BGPView, Whois/RDAP, NIST, VulnCheck, Malpedia, Malshare). Cross-service hash/IP correlation, VT behavior sandbox analysis, IOC extract (txt/pdf/eml/url, SSRF defended), MITRE ATT&CK, HTML/PDF reports | Python (requests + SQLite cache) |
 | **toolkit-setup** | Interactive setup wizard for .env, Docker builds, YARA/CAPA/FLOSS/oletools/dumpulator, and VMware config | — |
 
@@ -21,18 +22,18 @@ Reverse engineering & malware analysis toolkit for [Claude Code](https://claude.
 │                  Claude Code                     │
 │              (AI-driven orchestration)           │
 ├───────────────┬───────────────┬─────────────────┤
-│  malware-fetch    │ ghidra-headless│ malware-sandbox  │
-│  (Docker)     │  (Docker)     │  (VMware VM)    │
-├───────────────┼───────────────┼─────────────────┤
-│ • Screenshot  │ • Decompile   │ • Unpacking     │
-│ • HTML save   │ • Imports     │ • Frida DBI     │
-│ • Downloads   │ • Strings     │ • FakeNet C2    │
-│ • VT/MB/TF/OTX│ • YARA/CAPA   │ • PE-sieve      │
-│ • AES encrypt │ • IOC extract │ • Memory dump   │
-│ • Tor support │ • Classify    │ • x64dbg MCP    │
-│ • C2 profiling│ • .NET decomp │ • DispatchLogger │
-│ • ClickFix    │ • ZIP support │ • COM monitor   │
-├───────────────┴───────────────┴─────────────────┤
+│  malware-fetch │ ghidra-headless│ malware-sandbox │android-sandbox│
+│  (Docker)      │  (Docker)      │  (VMware VM)    │(SDK Emulator) │
+├────────────────┼────────────────┼─────────────────┼───────────────┤
+│ • Screenshot   │ • Decompile    │ • Unpacking     │ • APK triage  │
+│ • HTML save    │ • Imports      │ • Frida DBI     │ • Frida hooks │
+│ • Downloads    │ • Strings      │ • FakeNet C2    │ • CDP WebView │
+│ • VT/MB/TF/OTX │ • YARA/CAPA    │ • PE-sieve      │ • DEX dump    │
+│ • AES encrypt  │ • IOC extract  │ • Memory dump   │ • logcat      │
+│ • Tor support  │ • Classify     │ • x64dbg MCP    │ • Anti-detect │
+│ • C2 profiling │ • .NET decomp  │ • DispatchLogger │   bypass      │
+│ • ClickFix     │ • ZIP support  │ • COM monitor   │               │
+├────────────────┴────────────────┴─────────────────┴───────────────┤
 │              threat-intel (Python)               │
 │  VT • HA • Triage • Bazaar • ThreatFox • OTX   │
 │  URLHaus • Shodan • AbuseIPDB • GreyNoise • ... │
@@ -47,8 +48,9 @@ Reverse engineering & malware analysis toolkit for [Claude Code](https://claude.
 - [Claude Code](https://claude.com/claude-code) installed
 - Docker Desktop running
 - [VMware Workstation Pro](https://www.vmware.com/products/desktop-hypervisor/workstation-and-fusion) (malware-sandbox skill requires vmrun CLI)
+- Android SDK cmdline-tools (android-sandbox skill — optional, for APK analysis)
 - Go 1.26+ (only to rebuild the bundled Go tools from source — prebuilt `.exe` files ship in the repo)
-- Python 3.10+
+- Python 3.10+ (3.11+ for Frida-based Android analysis)
 
 ### Setup
 
