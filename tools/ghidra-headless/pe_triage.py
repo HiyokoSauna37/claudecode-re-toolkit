@@ -198,6 +198,18 @@ def analyze_pe(filepath: str) -> dict:
     result["is_dll"] = bool(pe.FILE_HEADER.Characteristics & 0x2000)
     result["is_exe"] = not result["is_dll"]
 
+    # Managed (.NET) assembly detection via the COM descriptor data directory (index 14).
+    # Ghidra's binary_info.py never reports a CLI stream, so this used to be answerable
+    # only by running a multi-minute full analysis that still did not say it. pefile
+    # answers it in milliseconds, which is what the triage step is for.
+    result["is_dotnet"] = False
+    try:
+        dirs = pe.OPTIONAL_HEADER.DATA_DIRECTORY
+        if len(dirs) > 14 and dirs[14].VirtualAddress and dirs[14].Size:
+            result["is_dotnet"] = True
+    except AttributeError:
+        pass
+
     # Compilation timestamp
     ts = pe.FILE_HEADER.TimeDateStamp
     try:
@@ -373,6 +385,10 @@ def print_report(result: dict):
         return
 
     print(f"  Arch        : {result.get('architecture', '?')}")
+    if result.get("is_dotnet"):
+        print("  .NET        : Yes (managed assembly) -> use dotnet-decompile, not analyze-full")
+    else:
+        print("  .NET        : No (native)")
     print(f"  Type        : {'DLL' if result.get('is_dll') else 'EXE'}")
     print(f"  Subsystem   : {result.get('subsystem', '?')}")
     print(f"  Compile Time: {result.get('compile_time', '?')}")

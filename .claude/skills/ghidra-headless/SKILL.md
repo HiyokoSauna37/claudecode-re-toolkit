@@ -2,13 +2,15 @@
 name: ghidra-headless
 description: >-
   Ghidra Headless AnalyzerをDockerコンテナで実行し、PE/ELF/.NET/ARM バイナリの静的解析・デコンパイル・インポート分析を行う。quarantine 由来 .enc.gz の自動復号にも対応。
-  Use when: バイナリ解析（EXE/DLL/.NET/ARM/Android）, デコンパイル, 静的解析, reverse engineering, マルウェア解析, CTF reversing, quarantine .enc.gz 解析
-  Do NOT use for: 動的解析（malware-sandbox）, メモリダンプ解析（memory-forensics）
+  Use when: バイナリ解析（EXE/DLL/.NET/ELF/ARM）, デコンパイル, 静的解析, reverse engineering, マルウェア解析, CTF reversing, quarantine .enc.gz 解析
+  Do NOT use for: 動的解析（malware-sandbox）, メモリダンプ解析（memory-forensics）, Android APK/DEX（本ツールに APK 展開・DEX ローダ経路は無い。pe-triage は PE 前提、zip 展開は最大ファイルを拾うだけ）
 instructions: |
   実行フロー:
   1. コンテナ確認: docker inspect -f '{{.State.Status}}' ghidra-headless → 停止中なら bash tools/ghidra-headless/ghidra.sh start
+     （`docker inspect` 自体が npipe 接続エラーなら Docker Desktop ごと停止中。起動して daemon の応答を待ってから再実行:
+     `powershell -c 'Start-Process "C:\Program Files\Docker\Docker\Docker Desktop.exe"'` → `until docker info >/dev/null 2>&1; do sleep 5; done`。実測 60〜90 秒）
   2. 解析対象のバイナリパスを確認（.enc.gz は全コマンドが自動復号するのでそのまま渡す。ホスト上で openssl/gunzip/decrypt_quarantine.py は絶対に使わない）
-  3. .NET判別（VTタグ assembly/msil、`info` 出力の CLI Stream、CAPA バックエンド dotnet のいずれか）→ Ghidra の decompile はスキップし dotnet-decompile を使う
+  3. .NET判別（`pe-triage` 出力の `.NET:` 行、VTタグ assembly/msil、CAPA バックエンド dotnet のいずれか）→ Ghidra の decompile はスキップし dotnet-decompile を使う
   4. 実行モード選択:
      - 単発調査（imports/strings/xrefs 等の特定コマンドだけ欲しい）→ ショートカット（body「解析起点の選択」A-C参照）
      - フル解析（ファミリ判定・レポートまで）→ analyze-full パイプライン（Phase 0-7: triage → FLOSS → viz → YARA → CAPA → Ghidra → IOC → 分類。**シーケンシャル実行**）
@@ -50,7 +52,7 @@ bash tools/ghidra-headless/ghidra.sh pe-triage --in-container <container-path> #
 ```bash
 bash tools/ghidra-headless/ghidra.sh analyze <binary>                         # フル解析（推奨）
 bash tools/ghidra-headless/ghidra.sh analyze --processor ARM:LE:32:v8T <bin>  # ARM Thumb強制
-bash tools/ghidra-headless/ghidra.sh info <binary>                            # アーキテクチャ/セクション
+bash tools/ghidra-headless/ghidra.sh info <binary>                            # アーキテクチャ/セクション（※フル解析が走る。数分かかる）
 bash tools/ghidra-headless/ghidra.sh decompile <binary>                       # C疑似コード
 bash tools/ghidra-headless/ghidra.sh functions <binary>                       # 関数一覧
 bash tools/ghidra-headless/ghidra.sh strings <binary>                         # 文字列+xref
@@ -99,10 +101,14 @@ bash tools/ghidra-headless/ghidra.sh dotnet-metadata <binary|file.enc.gz>     # 
 bash tools/ghidra-headless/ghidra.sh dotnet-types <binary|file.enc.gz>        # 型/クラス一覧
 ```
 
-出力先: `tools/dotnet-decompiler/output/<binary_name>/`
-- `Source/` — C# ソース（ILSpy デコンパイル結果、*.cs ファイル群）
-- `metadata.json` — アセンブリメタデータ（dotnet-metadata の出力）
-- `types.txt` — 型/クラス一覧（dotnet-types の出力）
+出力先: `tools/dotnet-decompiler/output/`。**Ghidra 系ともツール系とも命名が違うので注意**:
+- `<binary_name_without_ext>/` — C# ソース。**`Source/` サブディレクトリは無く、名前空間ディレクトリが直下に並ぶ**
+  （例: `output/System.Runtime.Remoting/System.Runtime.Remoting.Channels/...`）
+- `<binary>.<ext>_metadata.txt` — アセンブリメタデータ。**`.json` ではなく `.txt`、拡張子を残す**
+- `<binary>.<ext>_types.txt` — 型/クラス一覧（dotnet-types の出力）
+- `<binary>.<ext>_decompiled.json` — デコンパイル結果のサマリ
+
+**完了待ちのポーリング対象にするのはこの実パス**（後述「出力先」節の Ghidra 系 / ツール系の 2 規則は .NET には当てはまらない）。
 
 ### 出力読み取り（MSYS変換回避、必ずこれを使う）
 ```bash
@@ -155,13 +161,26 @@ Ghidra でデコンパイルする前に .NET バイナリかチェック。3つ
 
 | シグナル | 取得方法 |
 |---|---|
+| **`pe-triage` 出力の `.NET:` 行** | `.NET : Yes (managed assembly)` / `.NET : No (native)` ← **これが第一手** |
 | VT タグ | `assembly` / `msil` / `dotnet` |
-| `info` 出力 | セクションに `CLR` / `CLI Stream` |
 | CAPA | バックエンド `dotnet`（`ghidra.sh capa` が .NET バイナリを自動判定 — 追加フラグ不要） |
 
-**判別タイミング:** `pe-triage` は PE パッカー検出のみで .NET 判定はしない（CLI Stream シグナルは出ない）。事前情報なしの検体は `ghidra.sh info <binary>` を 1 回打って CLI Stream の有無を確認 → .NET なら dotnet-decompile、通常 PE なら analyze-full に分岐。VT タグで事前に `.NET` と分かっていれば pe-triage すらスキップして直接 dotnet-decompile でよい。
+**判別タイミング:** 事前情報なしの検体は **`ghidra.sh pe-triage <binary>` を最初に打つ**。
+PE の COM ディスクリプタを見て `.NET:` 行を返すので、**数秒で確定する**。
+`.NET : Yes` なら dotnet-decompile、`No` なら analyze-full に分岐。
+VT タグで事前に `.NET` と分かっていれば pe-triage すらスキップして直接 dotnet-decompile でよい。
+
+補助シグナル: `pe-triage` の `Imports : 1 DLLs, 1 functions` は managed .NET の典型（`mscoree.dll!_CorDllMain` のみ）。
+「動的 API 解決の疑い」と紛らわしいが、`.NET : Yes` が併記されていればこちらが理由。
+
+**`ghidra.sh info` を .NET 判別に使わないこと。** `info` は `CLR` / `CLI Stream` を一切出力せず
+（`binary_info.py` が報告するのは Format / Architecture / セクション / エントリポイントだけ）、
+しかも下記のとおり数分かかる。判別目的では pe-triage の完全な下位互換。
 
 .NET 確定 → `ghidra.sh decompile` はスキップし `ghidra.sh dotnet-decompile <binary>` を使う（Ghidra のデコンパイラは CLR を認識できない）。
+
+**呼び出しは `ghidra.sh dotnet-decompile <binary>` を使う。** `.exe` を直接叩く必要はない
+（直叩きする場合のサブコマンドは `decompile` / `metadata` / `list-types` で、`ghidra.sh` 側の名前とは異なる）。
 
 **構成**: `tools/dotnet-decompiler/dotnet-decompile.exe`（Go ラッパー）が docker compose 経由で `dotnet-decompiler` コンテナを起動し、コンテナ内で ILSpy CLI (`ilspycmd` 11.0) を実行する。`.enc.gz` はコンテナ内で `decrypt_quarantine.py` により復号 → ILSpy 解析 → output volume (`./output`) でホストに回収。
 
@@ -181,7 +200,10 @@ docker compose -f tools/dotnet-decompiler/docker-compose.yml up -d --build
 
 **.NET でも `pe-triage` / `yara-scan` / `capa` は有効**: .NET バイナリは PE ヘッダを持つので、ConfuserEx / Costura / SmartAssembly 等の .NET パッカー検出は pe-triage で可能。YARA/CAPA も .NET に対応（CAPA は `dotnet` バックエンドを使う）。
 
-**.NET では `analyze-full` を使わない**: analyze-full の Phase 1 には Ghidra analyze が含まれるが CLR は解析できず Ghidra 出力は無意味になる。.NET では個別コマンド（`pe-triage` → `yara-scan` + `capa` + `dotnet-decompile` + `dotnet-metadata` + `dotnet-types` を並列）→ 最後に watchtowr-report スキルで統合、という流れにする。
+**.NET では `analyze-full` を使わない**: analyze-full の Phase 1 には Ghidra analyze が含まれるが CLR は解析できず Ghidra 出力は無意味になる。.NET では個別コマンド（`pe-triage` → `yara-scan` + `capa` + `dotnet-decompile` + `dotnet-metadata` を並列）→ 最後に watchtowr-report スキルで統合、という流れにする。
+
+**`dotnet-types` は既定では不要**。`dotnet-decompile` が全 C# ソースを出すので型一覧は冗長になる。
+使うのは (a) デコンパイルが途中で失敗した / (b) ソースを読む前に型の全体像だけ先に見たい、のどちらかのとき。
 
 **並列実行手段:** Claude Code では Agent tool を使って subagent を 1 メッセージ内で複数 dispatch するのが推奨（独立コマンドは並列実行される）。手動の bash 実行なら別ターミナル or `&` でバックグラウンド化。
 
@@ -248,18 +270,86 @@ tools/quarantine/quarantine.exe analyze 1         # 復号+Ghidra解析
 ```
 `analyze N` が `No encrypted files to analyze.` を返した場合: そのエントリに `.enc.gz` バイナリが存在しない（平文ファイルのみ）。`quarantine.exe info N` でパスを確認し別エントリを選択する。平文 JS/HTML は ghidra-headless のスコープ外 → malware-fetch の `js_deobfuscate.py` 等を使う。
 
+## 正規ファイルでも出る所見（誤検知として扱ってよいもの）
+
+- **YARA の `MalDev_*` 系ヒット**: `yara-rules/custom/maldev_techniques.yar` は API ハッシュ計算などの
+  **手法**を検出するため、正規の Windows DLL にも当たる。`pe-triage` の verdict が `CLEAN_TRIAGE` で
+  署名も正当なら誤検知として扱ってよい。YARA 単独ヒットを悪性判定の根拠にしないこと
+- **マネージド .NET の `Arch`**: AnyCPU は PE ヘッダ上 `x86`、mixed-mode（ネイティブ P/Invoke を含む）は `x64` になる。
+  `Framework64` 配下で `x86` が出ても異常ではなく、**どちらの値も .NET 判定には影響しない**
+- **`Anomalies: Virtual/Raw ratio N x in .data - possible unpacking stub`**: `.data` は未初期化領域を含むため
+  VirtualSize > RawSize が正常。`.text` 以外でのこの比は**単体ではパッカーの根拠にならない**
+- **CAPA の capability 列挙**: CAPA は「その API を呼べる」ことを示すだけで悪性判定ではない。
+  `Suspend Thread` / `manipulate unmanaged memory in .NET` / `T1082` などは正規ライブラリでも普通に出る
+- **`Anomalies: Overlay data: N bytes`**: Authenticode 署名は PE 末尾のオーバーレイに載る。署名付きバイナリでは正常
+
+## pe-triage の `diec not found` は正常
+
+`pe-triage` が `(diec not found - install for packer detection: choco install die)` を出すのは
+**Detect It Easy が任意依存だから**。未導入でも triage 本体（アーキテクチャ / `.NET` 判定 / セクション /
+エントロピー / インポート / 不審 API / anomaly / verdict）はすべて動く。**欠けるのは DiE によるパッカー名の同定だけ。**
+この行を見て「セットアップが不足している」と報告したり、導入を待って解析を止めたりしないこと。
+（パッカー名まで要るなら別途 `choco install die`。本リポジトリの既定セットアップには含めていない）
+
+## 長時間コマンドの待ち方
+
+Ghidra のオートアナリシスを通るコマンドは **分単位**かかる。前景で待つとツール側のタイムアウトに先に当たり、
+「失敗した」と誤認しやすい。**バックグラウンド実行 + 出力ファイルのポーリング**で待つこと。
+
+| コマンド | 目安 | 備考 |
+|---|---|---|
+| `pe-triage` / `yara-scan` / `capa` / `dotnet-decompile` / `dotnet-metadata` / `dotnet-types` | 数秒〜1分 | Ghidra を起動しない |
+| `info` / `imports` / `strings` / `functions` / `exports` / `xrefs` / `decompile` | **数分〜十数分**（実測: 100KB の .NET DLL の `info` で約6分） | **すべて同じ Ghidra 解析を通る。`info` も「軽いコマンド」ではない** |
+| `analyze` / `analyze-full` | **ネイティブ検体では 30 分以上**（実測: 2MB のネイティブ DLL で約30分） | Phase 0-7 をシーケンシャル実行 |
+
+**所要時間は検体のサイズと種別で桁が変わる。** マネージド .NET は Ghidra 解析を飛ばすので数秒〜数十秒、
+ネイティブは同じコマンドでも数十分。**「数分」を上限だと思わないこと。**
+
+**FLOSS（600秒）/ CAPA（10分）のタイムアウトも失敗ではない。** 打ち切られた分の出力が欠けるだけで、
+パイプラインは後続フェーズへ進む。`analyze-full` の失敗サマリに出ていなければ他フェーズは成功している。
+
+**`ERROR REPORT: Analysis timed out at 300 seconds` は失敗ではない。**
+`ghidra.sh` の `TIMEOUT=300` に当たった表示で、その後に解析スクリプトが走り**出力ファイルは生成される**。
+これを見て中断しないこと。.NET バイナリではデコンパイル警告が数千〜1万行以上出るが、これも正常。
+
+待ち方:
+```bash
+# 0. 開始前に基準時刻を刻む（重要）
+touch /tmp/ghidra_start_marker
+
+# 1. Bash tool の run_in_background でコマンドを開始する（前景で待たない）
+bash tools/ghidra-headless/ghidra.sh imports <binary>
+
+# 2. 完了判定は「基準時刻より新しい出力が出たか」で行う
+OUT=tools/ghidra-headless/output/<binary>.<ext>_imports.txt
+until [ "$OUT" -nt /tmp/ghidra_start_marker ] 2>/dev/null; do sleep 30; done
+```
+
+**存在チェック（`[ -f ... ]`）で待ってはいけない。** 同じ検体を再解析した場合、
+**前回の古い出力が残っていると即座に「完了」と誤判定する**。必ず更新時刻で見ること。
+
+**いつまでも出ない場合は失敗している。** 目安時間の 2 倍を超えたらポーリングを打ち切り、
+コマンドの標準出力／標準エラーを読む（`WARNING: could not publish results` が出ていないか）。
+無限に待たないこと。
+待っている間に Ghidra を使わないコマンド（`pe-triage` / `yara-scan` / `capa`）を並行して進めてよい。
+
 ## 出力先
+
+**命名規則は生成元で 2 通りに分かれる**（ここを取り違えると `No such file or directory` になる）:
+- **Ghidra 系**（`info` / `imports` / `strings` / `functions` / `exports` / `xrefs` / `decompile`）→ **元の拡張子を残す**: `xkcp_unpacked.dll_info.txt`
+- **Python ツール系**（`pe-triage` / `yara-scan` / `capa`）→ **拡張子を除去する**: `System.Configuration.Install_capa.json`
 
 | 種別 | パス |
 |---|---|
-| Ghidra結果 | `tools/ghidra-headless/output/<binary>_<種別>.txt/.c` |
-| PE Triage | `<binary>_triage.json` |
+| Ghidra結果 | `tools/ghidra-headless/output/<binary>.<ext>_<種別>.txt/.c`（拡張子を残す） |
+| analyze-full 後段（IOC・分類） | `<binary>.<ext>_iocs.json` / `<binary>.<ext>_classification.json`（**拡張子を残す `.json`** — 上の2規則のどちらにも当てはまらない第3の系統） |
+| PE Triage | `<binary>_triage.json`（拡張子を除去） |
 | PE Fallback | `<binary>_pe_strings.txt`, `<binary>_pe_imports.txt` |
 | YARA | `<binary>_yara.json` |
 | CAPA | `<binary>_capa.json` |
 | IOC | `<binary>_iocs.json` |
 | 分類 | `<binary>_classification.json` |
-| .NET | `tools/dotnet-decompiler/output/<binary>/` |
+| .NET | ソース `tools/dotnet-decompiler/output/<binary_without_ext>/`、メタデータ `<binary>.<ext>_metadata.txt` |
 | ログ | `tools/ghidra-headless/logs/YYYYMMDD_<target>.md` |
 
 ## セットアップ（初回のみ）

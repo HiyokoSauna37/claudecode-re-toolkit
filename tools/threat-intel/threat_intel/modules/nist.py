@@ -10,7 +10,7 @@ from datetime import datetime
 from ..lib.session import create_session
 from ..lib.cache import cached
 from ..lib.display import error, warn, info, section
-from ..lib.output import collector
+from ..lib.output import collector, is_text_output
 from ..lib.config import get_key
 
 
@@ -92,6 +92,27 @@ class NISTExtractor:
         data['vulnerabilities'].sort(key=self._cve_year, reverse=True)
         return data
 
+    @staticmethod
+    def _pick_cvss3(metrics):
+        """Pick NVD's own CVSS v3 entry, not whichever one happens to be first.
+
+        NVD returns one entry per scoring organisation. For CVE-2020-1472 the CNA
+        (secure@microsoft.com) scores 5.5 MEDIUM and NVD scores 10.0 CRITICAL, and the
+        CNA's entry comes first -- so taking [0] reported Zerologon as a medium. Both
+        entries are marked type "Secondary" there, so the source is what disambiguates;
+        type is only a fallback for records where NVD does label a primary.
+        """
+        entries = metrics.get('cvssMetricV31') or metrics.get('cvssMetricV3') or []
+        if not entries:
+            return {}
+        for e in entries:
+            if e.get('source') == 'nvd@nist.gov':
+                return e
+        for e in entries:
+            if e.get('type') == 'Primary':
+                return e
+        return entries[0]
+
     def display(self, data, max_cves=None):
         if not data or 'vulnerabilities' not in data:
             warn("No results found.")
@@ -107,15 +128,34 @@ class NISTExtractor:
             descs = cve.get('descriptions', [])
             description = next((d['value'] for d in descs if d.get('lang') == 'en'), 'N/A')
             metrics = cve.get('metrics', {})
-            cvss3 = (metrics.get('cvssMetricV31') or metrics.get('cvssMetricV3') or [{}])[0]
-            cvss3_score = cvss3.get('cvssData', {}).get('baseScore', 'N/A')
-            cvss3_sev = cvss3.get('baseSeverity', 'N/A')
+            cvss3 = self._pick_cvss3(metrics)
+            cvss3_data = cvss3.get('cvssData', {})
+            cvss3_score = cvss3_data.get('baseScore', 'N/A')
+            # NVD API v2 nests baseSeverity inside cvssData. Reading it off the metric
+            # itself made every CVE report severity "N/A" even at CVSS 10.0.
+            cvss3_sev = cvss3_data.get('baseSeverity', cvss3.get('baseSeverity', 'N/A'))
+
+            # NVD v2 ships the CISA KEV decision inline (cisaExploitAdd et al). The
+            # module used to drop it, which left KEV answerable only through VulnCheck --
+            # so without a VulnCheck key every CVE came back "exploitation unknown" even
+            # though the very response already in hand said otherwise.
+            kev_added = cve.get('cisaExploitAdd')
+            kev_due = cve.get('cisaActionDue')
+            kev_name = cve.get('cisaVulnerabilityName')
 
             info(f"\n[{idx}] {cid}  ({status})")
-            print(f"    Published: {published}")
-            print(f"    CVSS v3:   {cvss3_score} ({cvss3_sev})")
-            wrapped = textwrap.fill(description, width=80, initial_indent='    ', subsequent_indent='    ')
-            print(wrapped)
+            # Bare print() bypasses the text/JSON guard that every other display helper
+            # honours, so `--output-format json` used to emit these lines onto stdout
+            # ahead of the JSON array and left the output unparseable by jq.
+            if is_text_output():
+                print(f"    Published: {published}")
+                print(f"    CVSS v3:   {cvss3_score} ({cvss3_sev})")
+                if kev_added:
+                    print(f"    CISA KEV:  LISTED  (added {kev_added}, action due {kev_due})")
+                else:
+                    print("    CISA KEV:  not listed (per NVD)")
+                wrapped = textwrap.fill(description, width=80, initial_indent='    ', subsequent_indent='    ')
+                print(wrapped)
 
             collector.add({
                 'cve_id': cid,
@@ -123,5 +163,13 @@ class NISTExtractor:
                 'status': status,
                 'cvss_v3_score': cvss3_score,
                 'cvss_v3_severity': cvss3_sev,
-                'description': description[:500],
+                'kev_listed': bool(kev_added),
+                'kev_added': kev_added,
+                'kev_action_due': kev_due,
+                'kev_name': kev_name,
+                # Full text on purpose: the terminal already prints the whole
+                # description, so truncating only the machine-readable copy handed
+                # downstream consumers a silently clipped field (it cut mid-word at
+                # 500 chars) while a human reading the same run saw everything.
+                'description': description,
             })

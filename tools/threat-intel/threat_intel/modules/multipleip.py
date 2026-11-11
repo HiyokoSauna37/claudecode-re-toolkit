@@ -4,6 +4,7 @@ Calls _raw_ip_info() (or get_ip_details()) on each registered extractor and
 renders a stacked report.
 """
 
+from ..lib.output import collector
 from ..lib.display import error, info, section
 
 
@@ -15,6 +16,7 @@ class MultipleIPExtractor:
         section("CONSOLIDATED IP CORRELATION REPORT")
         info(f"IP: {ip}")
         for name, ext in self.extractors.items():
+            collector.set_source(name)
             try:
                 if hasattr(ext, 'get_ip_details'):
                     ext.get_ip_details(ip)
@@ -25,6 +27,7 @@ class MultipleIPExtractor:
                     info(f"\n{name}: no IP method")
             except Exception as e:
                 error(f"\n{name}: {e}")
+        collector.set_source(None)
         section("END OF CORRELATION")
 
     def _render(self, name, ext, data):

@@ -42,7 +42,12 @@ ALL_SCRIPTS=(binary_info.py list_functions.py list_imports.py list_exports.py ex
 
 # --- Core functions ---
 
-compose() { docker compose -f "$COMPOSE_FILE" "$@"; }
+# MSYS_NO_PATHCONV=1 is exported above so `docker exec` container paths survive, but it
+# also stops /c/Users/... from being rewritten for host-side arguments -- docker.exe then
+# reads `-f /c/Users/...` as a path under a literal "c" directory and `start` dies with
+# "cannot find the path specified". Run compose from the file's own directory instead,
+# so no host path is passed on the command line at all.
+compose() { (cd "$SCRIPT_DIR" && docker compose "$@"); }
 
 ensure_running() {
     local status
@@ -304,11 +309,30 @@ mk_container_out() {
 # Publish a container output dir to /analysis/output (bind mount) and to the host
 # output/ dir, then remove it unless <keep> is 1 (steps of one analyze-full run
 # share a dir and keep it until the pipeline ends).
+# /analysis/output accumulates files from two different users: Ghidra runs as
+# uid 100 (ghidra), the Python tools run as root. Root-owned files land as 0640,
+# which the ghidra user then cannot overwrite -- so re-analysing a binary made the
+# Ghidra post-scripts die with "[Errno 13] Permission denied" while the pipeline
+# still reported success and the STALE output stayed on disk looking current.
+# Normalising ownership before each run is non-destructive and fixes it at the source.
+normalise_output_perms() {
+    dexec -u root "$CONTAINER" sh -c         'chown -R ghidra:ghidra /analysis/output 2>/dev/null; chmod -R ug+rw /analysis/output 2>/dev/null'         >/dev/null 2>&1 || true
+}
+
 publish_container_out() {
     local d="$1"
     local keep="${2:-0}"
     [ -z "$d" ] && return 0
-    dexec "$CONTAINER" sh -c "cp -f '$d'/* /analysis/output/ 2>/dev/null" >/dev/null 2>&1 || true
+    normalise_output_perms
+    # Report copy failures instead of swallowing them. This used to be
+    # `2>/dev/null ... || true`, so a permission error here was invisible and the
+    # caller happily went on to read whatever stale file was already there.
+    local cp_err
+    cp_err=$(dexec "$CONTAINER" sh -c "cp -f '$d'/* /analysis/output/" 2>&1) || {
+        echo "WARNING: could not publish results to /analysis/output:" >&2
+        echo "$cp_err" | head -5 >&2
+        echo "  -> files already in output/ may be STALE. Check their timestamps." >&2
+    }
     mkdir -p "$SCRIPT_DIR_WIN/output"
     docker cp "$CONTAINER:$d/." "$SCRIPT_DIR_WIN/output/" >/dev/null 2>&1 || true
     [ "$keep" = "1" ] || dexec "$CONTAINER" rm -rf "$d" >/dev/null 2>&1 || true
@@ -415,6 +439,9 @@ run_ghidra_scripts() {
     ensure_running
     resolve_binary "$binary" || exit 1
     auto_detect_processor "$RESOLVED_BINARY"
+    # Ghidra post-scripts write straight into /analysis/output, so they need the
+    # ownership fixed up front -- publish_container_out runs too late for them.
+    normalise_output_perms
     run_headless "$RESOLVED_BINARY" "${scripts[@]}"
     cleanup_resolved
 }

@@ -46,11 +46,49 @@ class IOCExtractor:
                     .replace('[.]', '.')
                     .replace('[:]', ':'))
 
+    # Anything whose final label is one of these is a filename or a code identifier,
+    # never a domain. Malware reports are full of them (ntdll.dll, MSBuild.exe), and
+    # the generic label.label.tld pattern happily matched every one.
+    NON_TLD_SUFFIXES = frozenset("""
+        dll exe sys drv ocx cpl scr com_ bat cmd ps1 psm1 vbs vbe js jse wsf hta
+        py pyc pyd rb pl php asp aspx jsp html htm xml json yaml yml toml ini cfg
+        conf txt log tmp temp dat bin db sqlite pdb map md rst csv tsv
+        zip rar 7z gz tar bz2 xz cab iso img msi msu lnk url inf reg
+        png jpg jpeg gif bmp ico svg webp mp3 mp4 avi wav pdf doc docx xls xlsx
+        ppt pptx rtf odt c cc cpp cxx h hpp cs java class jar go rs swift kt
+        sh bash zsh make cmake lock sum mod
+        pcap pcapng evtx dmp vmem mem raw hex idb i64 bndb
+    """.split())
+
+    @classmethod
+    def _looks_like_domain(cls, candidate):
+        last = candidate.rsplit('.', 1)[-1]
+        if last.lower() in cls.NON_TLD_SUFFIXES:
+            return False
+        # Mixed-case final labels are .NET/Java identifiers (Assembly.Load,
+        # System.Drawing.Bitmap). Real TLDs are written all-lower or all-upper,
+        # so requiring uniform case drops the identifiers without touching
+        # EXAMPLE.COM or example.com.
+        if last != last.lower() and last != last.upper():
+            return False
+        return True
+
+    # Markdown and prose wrap URLs in punctuation the URL pattern happily swallows
+    # (trailing backticks, asterisks, brackets, sentence periods), which produced
+    # near-duplicate entries differing only by the trailing junk.
+    URL_TRAILING_JUNK = '`*_)]},.;:!?' + chr(34) + chr(39)
+
     def extract_from_text(self, text):
         text = self.refang(text)
         results = {}
         for name, pat in self.patterns.items():
-            results[name] = sorted(set(pat.findall(text)))
+            found = set(pat.findall(text))
+            if name == 'domains':
+                found = {d for d in found if self._looks_like_domain(d)}
+            elif name == 'urls':
+                found = {u.rstrip(self.URL_TRAILING_JUNK) for u in found}
+                found.discard('')
+            results[name] = sorted(found)
         return results
 
     @staticmethod

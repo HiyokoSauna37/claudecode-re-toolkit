@@ -18,8 +18,12 @@ def run_correlate_hash(hash_value):
     from .modules.multiplehash import MultipleHashExtractor
 
     extractors = {
-        'MalwareBazaar': BazaarAdapter(),  # keyless OK
-        'URLHaus': URLHausExtractor(),     # keyless OK
+        # Registered unconditionally, which is why these two show up as an HTTP 401
+        # block instead of being silently skipped like the keyed services below.
+        # abuse.ch made auth mandatory, so without ABUSECH_AUTH_KEY they reach the
+        # server and get rejected -- they are no longer keyless in practice.
+        'MalwareBazaar': BazaarAdapter(),
+        'URLHaus': URLHausExtractor(),
     }
     if get_key('virustotal'):
         extractors['VirusTotal'] = VirusTotalAdapter()

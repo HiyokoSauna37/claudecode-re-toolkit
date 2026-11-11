@@ -15,12 +15,28 @@ class ResultCollector:
     def __init__(self):
         self.records = []
         self._current = {}
+        self._source = None
+
+    def set_source(self, name):
+        """Name the service whose records follow, or None to stop stamping.
+
+        Correlation workflows stack several services into one JSON array. Without
+        this, an element carried no hint of which service produced it -- VirusTotal
+        happened to include its own 'source' key, every other service included
+        nothing -- so consumers had to guess from the field shape.
+        """
+        self._source = name
+
+    def _stamp(self, record):
+        if self._source and 'source' not in record:
+            return {'source': self._source, **record}
+        return record
 
     def add(self, record):
         if isinstance(record, dict):
-            self.records.append(record)
+            self.records.append(self._stamp(record))
         elif isinstance(record, list):
-            self.records.extend(r for r in record if isinstance(r, dict))
+            self.records.extend(self._stamp(r) for r in record if isinstance(r, dict))
 
     def start_record(self):
         self._current = {}
@@ -30,7 +46,7 @@ class ResultCollector:
 
     def end_record(self):
         if self._current:
-            self.records.append(self._current)
+            self.records.append(self._stamp(self._current))
             self._current = {}
 
     def finalize(self, file=None):
@@ -56,6 +72,7 @@ class ResultCollector:
     def clear(self):
         self.records = []
         self._current = {}
+        self._source = None
 
 
 collector = ResultCollector()

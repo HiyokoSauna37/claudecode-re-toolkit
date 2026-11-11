@@ -19,6 +19,7 @@ class MultipleHashExtractor:
         section("CONSOLIDATED HASH CORRELATION REPORT", width=100)
         info(f"Hash: {hash_value}")
         for name, ext in self.extractors.items():
+            collector.set_source(name)
             try:
                 data = ext._raw_hash_info(hash_value)
                 if not data:
@@ -27,6 +28,7 @@ class MultipleHashExtractor:
                 self._render(name, ext, data)
             except Exception as e:
                 error(f"\n{name}: {e}")
+        collector.set_source(None)
         section("END OF CORRELATION", width=100)
 
     def _render(self, name, ext, data):
