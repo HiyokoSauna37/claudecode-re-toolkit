@@ -36,7 +36,7 @@ claudecode-re-toolkit/
 ├── reports/
 │   ├── campaigns/                # 解析レポート (.md)
 │   ├── screenshots/              # 証拠スクリーンショット (.png)
-│   └── writeups/                 # Zenn記事・評価文書
+│   └── writeups/                 # 評価文書（Zenn記事は drafts/ にローカル保管、gitignore）
 └── notes/
     └── bug_bounty/               # 脆弱性調査・PoC
 ```
@@ -148,6 +148,7 @@ Android SDK エミュレータ上でAPKマルウェアの動的解析を実行�
 ### Git管理
 - 解析ツールのコード変更があればコミット＆プッシュ
 - Quarantine / output / logs ディレクトリはコミットしない
+- **Zenn記事（原稿・下書き・画像）はコミットしない。** `reports/writeups/drafts/` に置く。ファイル名に `zenn` を含むものは `.gitignore` で除外済み。`git add -f` で強制追加しない
 
 ### 個人情報（PII）漏洩防止 — 絶対厳守
 
