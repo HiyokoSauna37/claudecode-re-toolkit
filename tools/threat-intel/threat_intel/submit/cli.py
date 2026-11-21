@@ -29,6 +29,10 @@ def _render(plan, payloads=True):
     acts = plan['actions']
     _out(f"IOC SUBMISSION PLAN {plan['plan_id']}  ({plan['title']})")
     _out(f"manifest: {plan['manifest']}  created: {plan['created_at']}")
+    _out(f"provenance claim: tlp={plan['tlp'] or '-'}  source={plan['source'] or '-'}  "
+         f"(approve only if these samples/IOCs really are your own OSINT collection)")
+    if plan.get('reference'):
+        _out(f"public reference sent with submissions: {plan['reference']}")
     _out('-' * 100)
     _out(f"{'#':>3}  {'service':<11}{'ioc':<52}{'status':<9}")
     for a in acts:
@@ -101,10 +105,23 @@ def cmd_approve(plan_id):
     return 0
 
 
-def _record(plan_id, a, res):
+def _attempt_id(plan_id, a):
+    return f"{plan_id}-{a['n']}"
+
+
+def _record_attempt(plan_id, a):
+    """Written BEFORE sending: if the process dies mid-request, the attempt stays
+    'unresolved' and later plans block that IOC until a human checks the platform."""
     ledger.append({
-        'plan_id': plan_id, 'service': a['service'], 'ioc': precheck.ledger_key(a),
-        'type': a['type'], 'role': a['role'], 'ok': res.get('ok'),
+        'event': 'attempt', 'attempt_id': _attempt_id(plan_id, a), 'plan_id': plan_id,
+        'service': a['service'], 'ioc': precheck.ledger_key(a), 'type': a['type'], 'role': a['role'],
+    })
+
+
+def _record_result(plan_id, a, res):
+    ledger.append({
+        'event': 'result', 'attempt_id': _attempt_id(plan_id, a), 'plan_id': plan_id,
+        'service': a['service'], 'ioc': precheck.ledger_key(a), 'ok': res.get('ok'),
         'duplicate': res.get('duplicate', False), 'uncertain': res.get('uncertain', False),
         'http_status': res.get('http_status'), 'link': res.get('link'),
         'error': res.get('error'), 'response': res.get('response'),
@@ -139,8 +156,9 @@ def cmd_run(plan_id):
     results = []
 
     for a in (x for x in ready if x['kind'] == 'ioc'):
+        _record_attempt(plan_id, a)
         res = clients.SUBMITTERS[a['service']](a['request'])
-        _record(plan_id, a, res)
+        _record_result(plan_id, a, res)
         results.append((a, res))
 
     groups = {}
@@ -149,10 +167,12 @@ def cmd_run(plan_id):
         groups.setdefault((f['path'], f['sha256'], f['filename']), []).append(a)
     for (path, sha, fname), acts in groups.items():
         reqs = {a['service']: {k: v for k, v in a['request'].items() if k != 'file'} for a in acts}
+        for a in acts:
+            _record_attempt(plan_id, a)
         out = samples.upload(path, sha, fname, reqs)
         for a in acts:
-            res = out.get(a['service']) or {'ok': False, 'error': 'no result from container'}
-            _record(plan_id, a, res)
+            res = out.get(a['service']) or {'ok': False, 'uncertain': True, 'error': 'no result from container'}
+            _record_result(plan_id, a, res)
             results.append((a, res))
 
     _out(f"SUBMISSION RESULTS — plan {plan_id}")
@@ -168,24 +188,50 @@ def cmd_run(plan_id):
         if res.get('link'):
             _out(f"       {res['link']}")
         if not res.get('ok'):
-            _out(f"       error: {res.get('error') or ''} {_short(res.get('response') or '', 300)}")
+            _out(f"       attempt {_attempt_id(plan_id, a)} error: {res.get('error') or ''} "
+                 f"{_short(res.get('response') or '', 300)}")
     _out('-' * 100)
     _out(f"done: {len(results) - bad} ok, {bad} failed/uncertain. Ledger: tools/threat-intel/data/submit/ledger.jsonl")
     return 0 if bad == 0 else 1
 
 
 def cmd_ledger(last=20):
-    rows = ledger.entries()[-last:]
-    if not rows:
+    recs = list(ledger.attempts().items())[-last:]
+    if not recs:
         _out("ledger is empty")
         return 0
-    for e in rows:
-        state = 'OK' if e.get('ok') else ('UNCERTAIN' if e.get('uncertain') else 'FAILED')
-        _out(f"{e['ts'][:19]}  {e.get('plan_id')}  {e.get('service'):<11}{_short(e.get('ioc'), 48):<50}{state:<10}{e.get('link') or ''}")
+    for aid, rec in recs:
+        a, f = rec['attempt'], rec['final'] or {}
+        state = ledger.state_of(rec).upper()
+        if f.get('event') == 'resolve':
+            state += '(resolved)'
+        _out(f"{a['ts'][:19]}  {aid:<16}{a.get('service'):<11}{_short(a.get('ioc'), 46):<48}{state:<18}{f.get('link') or ''}")
     return 0
 
 
-def dispatch(action, value, only=None, skip=None, last=20):
+def cmd_resolve(attempt_id, verdict):
+    """Record the outcome of an UNRESOLVED/UNCERTAIN attempt after checking the platform.
+    Only affects dedup; never sends anything (a re-submit still needs plan + human approval)."""
+    if verdict not in ('ok', 'failed'):
+        print("usage: submit resolve <attempt_id> ok|failed", file=sys.stderr)
+        return 2
+    rec = ledger.get_attempt(attempt_id)
+    if not rec:
+        print(f"unknown attempt {attempt_id!r} (see `submit ledger`)", file=sys.stderr)
+        return 2
+    st = ledger.state_of(rec)
+    if st in ('ok', 'failed'):
+        print(f"attempt {attempt_id} is already {st.upper()}; nothing to resolve", file=sys.stderr)
+        return 2
+    a = rec['attempt']
+    ledger.append({'event': 'resolve', 'attempt_id': attempt_id, 'plan_id': a.get('plan_id'),
+                   'service': a.get('service'), 'ioc': a.get('ioc'), 'ok': verdict == 'ok',
+                   'uncertain': False})
+    _out(f"attempt {attempt_id} ({a.get('service')} {a.get('ioc')}) marked {verdict.upper()}")
+    return 0
+
+
+def dispatch(action, value, only=None, skip=None, last=20, extra=None):
     try:
         sys.stdout.reconfigure(errors='replace')
     except Exception:
@@ -200,5 +246,7 @@ def dispatch(action, value, only=None, skip=None, last=20):
         return cmd_run(value)
     if action == 'ledger':
         return cmd_ledger(last)
+    if action == 'resolve':
+        return cmd_resolve(value, extra)
     print(f"unknown submit action {action!r}", file=sys.stderr)
     return 2

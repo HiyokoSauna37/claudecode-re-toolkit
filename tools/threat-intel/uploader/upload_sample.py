@@ -9,10 +9,13 @@ is decrypted in memory, its SHA-256 is checked against the job, and the bytes
 are streamed to each service. Nothing is written to disk; the container is
 --read-only and removed afterwards. Stdlib + cryptography only.
 
-Endpoints (verified against vendor docs, 2026-11):
+Endpoints per vendor docs (read 2026-11; not yet exercised against the live APIs):
   MalwareBazaar : POST https://mb-api.abuse.ch/api/v1/    Auth-Key header, multipart json_data + file
+                  success = query_status "inserted" / "file_already_known" (documented values)
   VirusTotal    : POST https://www.virustotal.com/api/v3/files  x-apikey (>32MB: GET /files/upload_url first)
+                  success = HTTP 200
   Triage        : POST https://tria.ge/api/v0/samples     Bearer token, multipart _json + file
+                  success = HTTP 200 with an "id" (documented example response)
 """
 
 import gzip

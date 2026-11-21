@@ -103,6 +103,38 @@ CHECKS = {
 }
 
 
+def threatfox_type_pairs():
+    """{(threat_type, ioc_type)} accepted by ThreatFox, from its `types` query; None if unknown."""
+    import json
+    from ..modules._adapters import ThreatFoxAdapter
+    ad = ThreatFoxAdapter()
+    try:
+        r = ad._session().post(ad.base, data=json.dumps({'query': 'types'}), timeout=60)
+        d = r.json()
+    except Exception:
+        return None
+    data = d.get('data') if isinstance(d, dict) else None
+    rows = data.values() if isinstance(data, dict) else (data if isinstance(data, list) else [])
+    pairs = {(row.get('fk_threat_type'), row.get('ioc_type')) for row in rows if isinstance(row, dict)}
+    pairs.discard((None, None))
+    return pairs or None
+
+
+def _verify_threatfox_types(actions):
+    tf = [a for a in actions if a['service'] == 'threatfox' and a['status'] == 'ready']
+    if not tf or not get_key('threatfox'):
+        return
+    pairs = threatfox_type_pairs()
+    for a in tf:
+        pair = (a['request']['threat_type'], a['request']['ioc_type'])
+        if pairs is None:
+            a['warnings'].append("could not verify threat_type/ioc_type against ThreatFox `types` — "
+                                 "the submission may be rejected")
+        elif pair not in pairs:
+            a['status'] = 'blocked'
+            a['reasons'].append(f"ThreatFox does not list threat_type/ioc_type {pair} in its `types` query")
+
+
 def run(actions):
     prev_cache = cv.cache_enabled
     cv.cache_enabled = False
@@ -111,10 +143,17 @@ def run(actions):
             if a['status'] != 'ready':
                 continue
             svc = a['service']
-            prev = ledger.submitted_ok(svc, ledger_key(a))
-            if prev:
-                a['status'] = 'skip'
-                a['reasons'].append(f"already submitted by you on {prev['ts'][:10]} (plan {prev.get('plan_id')})")
+            hit = ledger.lookup(svc, ledger_key(a))
+            if hit:
+                st, att, _fin = hit
+                if st == 'ok':
+                    a['status'] = 'skip'
+                    a['reasons'].append(f"already submitted by you on {att['ts'][:10]} (plan {att.get('plan_id')})")
+                else:
+                    a['status'] = 'blocked'
+                    a['reasons'].append(
+                        f"previous attempt {att['attempt_id']} is {st.upper()} — check the platform by hand, then "
+                        f"`submit resolve {att['attempt_id']} ok|failed` (ok = it is there, failed = it is not)")
                 continue
             if not get_key(svc):
                 a['status'] = 'blocked'
@@ -129,6 +168,7 @@ def run(actions):
             elif known:
                 a['status'] = 'skip'
                 a['reasons'].append(f"already known on {svc}: {known}")
+        _verify_threatfox_types(actions)   # only for ThreatFox actions still READY
     finally:
         cv.cache_enabled = prev_cache
     return actions

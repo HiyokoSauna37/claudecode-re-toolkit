@@ -13,7 +13,8 @@ data/submit/plans/<id>.json   (送信内容そのもの。digest 付きで改ざ
 data/submit/approvals/<id>.json
         │  submit run      … 承認済み plan のペイロードだけを 1 回ずつ送る
         ▼
-data/submit/ledger.jsonl      (監査ログ。重複投稿防止にも使う)
+data/submit/ledger.jsonl      (送信前に attempt、送信後に result を書く。重複投稿の防止にも使う)
+        │  submit resolve <attempt_id> ok|failed   … UNCERTAIN / UNRESOLVED を手で確認した結果を記録する
 ```
 
 `tools/threat-intel/data/submit/` は gitignore 済み。
@@ -30,7 +31,12 @@ data/submit/ledger.jsonl      (監査ログ。重複投稿防止にも使う)
    - **Claude 自身は approve を実行しない。承認ファイルも書かない**（`.claude/hooks/guard_submit_approve.py` がブロックする）。
      ブロックされたときに回避策を探してはいけない。
 5. 承認されたら `submit run <plan_id>` を実行し、結果表とリンクをユーザに報告する。
-6. 結果が `UNCERTAIN`（送信後にタイムアウト）だった場合は再実行しない。リンク先で登録されたかを確認してから判断する。
+   **Bash ツールの既定タイムアウト（120 秒）で途中で切られないよう、`run_in_background` で実行するか、timeout を最大にする。**
+   POST は 1 件あたり最大 60 秒、検体コンテナは最大 30 分かかることがある。
+6. 結果が `UNCERTAIN`（送信後のタイムアウトや、URLhaus で lookup にまだ出てこない場合）または `UNRESOLVED`（送信中にプロセスが落ちた）
+   の行は、次の plan で BLOCK される。リンク先で登録されたかを確認し、
+   `submit resolve <attempt_id> ok`（登録されていた）または `failed`（されていなかった）を記録する。
+   resolve は台帳の重複判定にだけ影響し、何も送信しない。再投稿する場合は、改めて plan と承認が必要。
 
 ## マニフェスト（schema 1）
 
@@ -100,14 +106,22 @@ IOC ごとに書けるフィールド: `malware`, `confidence`, `tags`, `comment
 
 ## 送信の実装
 
+- **台帳**: 各アクションは、送信**前**に `attempt` 行、送信後に `result` 行を書く（fsync あり）。
+  `result` の無い `attempt`（UNRESOLVED）と UNCERTAIN は、`resolve` するまで同じ IOC を BLOCK する。
+  実行済みの plan は再実行できない。
 - **IOC 系（ThreatFox / URLhaus / AbuseIPDB）**: ホストから `requests` で 1 回だけ送る。`create_session` は 5xx のとき POST も再送するので使わない。
   タイムアウトした場合は `UNCERTAIN` として記録する。
+  - ThreatFox: 成功判定は `query_status == "ok"`（abuse.ch 共通の成功値）。`threat_type` と `ioc_type` の組み合わせは、
+    plan 時に `types` クエリで照合する（一覧に無ければ BLOCK、照会できなければ警告）。
+  - URLhaus: 投稿 API のレスポンス本文は文書化されていないため、本文からは成功と判定しない。
+    投稿後に lookup API で URL が見えたときだけ OK とし、見えなければ UNCERTAIN にする。
+  - AbuseIPDB: HTTP 200 で `data` が返れば OK（文書化されている形式）。
 - **検体（MalwareBazaar / VT / Triage）**: `ti-sample-uploader` コンテナ（`tools/threat-intel/uploader/`）の中で処理する。
   暗号化 blob を読み取り専用でマウントし、メモリ上で復号して SHA-256 がマニフェストと一致することを確認してから送信する。
   コンテナは `--read-only --cap-drop ALL` で起動し、ディスクには書かない。イメージが無ければ初回の run で自動ビルドする。
 - API キーは送信時に `.env` から読み込む。plan ファイルや台帳には保存しない。
 
-## サービス別の要点（2026-11 に公式ドキュメントで確認）
+## サービス別の要点（2026-11 に公式ドキュメントを読んで反映。実 API での送信はまだ未検証）
 
 | サービス | 認証 | 無料枠 | 注意 |
 |---|---|---|---|
@@ -126,8 +140,10 @@ IOC ごとに書けるフィールド: `malware`, `confidence`, `tags`, `comment
 
 - Bash / PowerShell で `intel-cli ... submit approve` を実行しようとするとブロックする
 - `data/submit/approvals/` 配下を触る操作（ファイル書き込みやシェルコマンド）もブロックする
-- `!` プレフィックスで実行したコマンドは Claude のツール呼び出しではないため、人間はそのまま承認できる。
+- `!` プレフィックスで実行したコマンドは Claude のツール呼び出しではないので、hook は通らない想定（未検証）。
   もし `!` でもブロックされた場合は、別のターミナルで同じコマンドを実行する。
+- **この hook は誤って承認してしまうのを防ぐための仕掛けで、強固な境界ではない。** コマンド文字列で照合しているだけなので、
+  文字列を含まないスクリプトを経由すれば素通りする。Claude はそうした回避をしてはいけない。
 
 ## 後続フェーズ（未実装）
 

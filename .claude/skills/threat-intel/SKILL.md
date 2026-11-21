@@ -267,14 +267,16 @@ instructions: |
   python tools/threat-intel/intel-cli.py submit plan reports/campaigns/<name>.iocs.yaml   # dry-run（何も送らない）
   ! python tools/threat-intel/intel-cli.py submit approve <plan_id>                       # ← 人間だけが実行する
   python tools/threat-intel/intel-cli.py submit run <plan_id>                             # 承認済みペイロードを送信
-  python tools/threat-intel/intel-cli.py submit show <plan_id> | submit ledger
+  python tools/threat-intel/intel-cli.py submit show <plan_id> | submit ledger | submit resolve <attempt_id> ok|failed
   ```
   - **Claude は approve を実行しない。承認ファイルも書かない。** hook（`.claude/hooks/guard_submit_approve.py`）がブロックする。
     plan の結果をユーザに見せ、`!` 付きで approve を実行してもらう。ブロックされても回避策を探さない。
   - 投稿してよいのは、ユーザが自分で集めた OSINT 検体（`tlp: clear` + `source: osint`）だけ。仕事や顧客由来のものは投稿しない。
   - 検体は Docker（`ti-sample-uploader`）内で復号してから送る。ホストに平文は出さない。
   - フィッシング LP の URL / ドメインは URLhaus・ThreatFox の受付対象外なので `MANUAL` 行になる（ブラウザでの通報は後続フェーズ）。
-  - 結果が `UNCERTAIN` だった場合は再実行せず、リンク先で登録されたかを確認する。
+  - `submit run` は `run_in_background` で実行するか、timeout を最大にする（既定の 120 秒では途中で切られることがある）。
+  - 結果が `UNCERTAIN` / `UNRESOLVED` の行は再実行しない。リンク先を確認してから
+    `submit resolve <attempt_id> ok|failed` を記録する（重複判定にだけ影響し、何も送らない）。
 
   ## .env (リポジトリルート)
 

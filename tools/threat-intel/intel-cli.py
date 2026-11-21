@@ -222,11 +222,14 @@ def _build_parser():
                "  submit plan m.iocs.yaml --only threatfox,urlhaus\n"
                "  submit show <plan_id>\n"
                "  submit run <plan_id>\n"
-               "  submit ledger --last 50\n\n"
+               "  submit ledger --last 50\n"
+               "  submit resolve <attempt_id> ok|failed   # after checking an UNCERTAIN/UNRESOLVED attempt\n\n"
                "APPROVAL (human only, type it yourself with the ! prefix):\n"
                "  ! python tools/threat-intel/intel-cli.py submit approve <plan_id>")
-    sm.add_argument('action', choices=['plan', 'show', 'approve', 'run', 'ledger'])
-    sm.add_argument('value', nargs='?', default=None, help='manifest path (plan) or plan id')
+    sm.add_argument('action', choices=['plan', 'show', 'approve', 'run', 'ledger', 'resolve'])
+    sm.add_argument('value', nargs='?', default=None,
+                    help='manifest path (plan), plan id (show/approve/run) or attempt id (resolve)')
+    sm.add_argument('verdict', nargs='?', default=None, help='resolve only: ok | failed')
     sm.add_argument('--only', default='', help='comma-separated services to include')
     sm.add_argument('--skip', default='', help='comma-separated services to exclude')
     sm.add_argument('--last', type=int, default=20, help='ledger rows to show')
@@ -579,9 +582,11 @@ def _dispatch(args):
 def _submit(args):
     from threat_intel.submit.cli import dispatch as submit_dispatch
     if args.action != 'ledger' and not args.value:
-        _exit_input_error(f"submit {args.action} needs a {'manifest path' if args.action == 'plan' else 'plan id'}")
+        need = {'plan': 'manifest path', 'resolve': 'attempt id'}.get(args.action, 'plan id')
+        _exit_input_error(f"submit {args.action} needs a {need}")
     split = lambda v: [x.strip() for x in (v or '').split(',') if x.strip()]
-    return submit_dispatch(args.action, args.value, only=split(args.only), skip=split(args.skip), last=args.last)
+    return submit_dispatch(args.action, args.value, only=split(args.only), skip=split(args.skip),
+                           last=args.last, extra=args.verdict)
 
 
 def _cmd_auto(val):

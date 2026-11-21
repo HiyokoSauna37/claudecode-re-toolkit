@@ -53,9 +53,12 @@ def threatfox(req):
         d = r.json()
     except ValueError:
         d = r.text
+    # query_status == 'ok' is abuse.ch's documented success marker; anything else is a failure
+    # (the detailed submit_ioc response shape is not documented, so it is only recorded).
     ok = r.status_code == 200 and isinstance(d, dict) and d.get('query_status') == 'ok'
     link = 'https://threatfox.abuse.ch/browse.php?search=ioc%3A' + quote(req['iocs'][0], safe='')
-    return _result(ok, r.status_code, d, link)
+    err = None if ok else (d.get('query_status') if isinstance(d, dict) else f"HTTP {r.status_code}")
+    return _result(ok, r.status_code, d, link, error=err)
 
 
 @_guard
@@ -65,11 +68,30 @@ def urlhaus(req):
               headers={'Auth-Key': get_key('urlhaus'), 'Content-Type': 'application/json'},
               json=req)
     text = r.text or ''
-    low = text.lower()
-    ok = r.status_code == 200 and not any(w in low for w in ('error', 'invalid', 'denied', 'not allowed'))
     url = req['submission'][0]['url']
     link = 'https://urlhaus.abuse.ch/browse.php?search=' + quote(url, safe='')
-    return _result(ok, r.status_code, text, link)
+    if r.status_code != 200:
+        return _result(False, r.status_code, text, link, error=f"HTTP {r.status_code}")
+    # The submit response body is not documented, so never infer success from it.
+    # Positive signal = the URL is now visible via the documented lookup API.
+    if _urlhaus_visible(url):
+        return _result(True, r.status_code, text, link)
+    return _result(False, r.status_code, text, link, uncertain=True,
+                   error="HTTP 200 but the URL is not (yet) visible via lookup — may be queued; "
+                         "check the link later, then `submit resolve <attempt> ok|failed`")
+
+
+def _urlhaus_visible(url):
+    from ..modules.urlhaus import URLHausExtractor
+    prev = cv.cache_enabled
+    cv.cache_enabled = False
+    try:
+        d = URLHausExtractor().url_check(url)
+        return isinstance(d, dict) and d.get('query_status') == 'ok'
+    except Exception:
+        return False
+    finally:
+        cv.cache_enabled = prev
 
 
 @_guard
