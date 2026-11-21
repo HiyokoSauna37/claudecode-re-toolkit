@@ -1,0 +1,19 @@
+# IOC manifest for 20260312_developmental_cloudflare_GoDropper.md
+# Schema / rules: .claude/skills/threat-intel/references/ioc-submission.md
+schema: 1
+title: Fake Cloudflare check -> Go dropper (developmental.exe)
+report: reports/campaigns/20260312_developmental_cloudflare_GoDropper.md
+tlp: clear
+source: osint          # self-collected via malware-fetch from cloudflare-check.cfd
+defaults:
+  first_seen: 2026-03-12
+  tags: [GoDropper, FakeCloudflare, ClickFix]
+  delivery_method: web_download
+iocs:
+  - type: sha256
+    value: 2c4e09f94e5487378f4953e4d0fb1353be50087991ae9d8e93367a41f5898007
+    role: sample
+    file: tools/malware-fetch/Quarantine/cloudflare-check.cfd/20260312_101657/index.php.enc.gz
+    filename: developmental.exe
+    # Family unconfirmed (report verdict: Unknown) -> no Malpedia name, so ThreatFox is skipped.
+    skip: [threatfox]
