@@ -63,6 +63,9 @@ tools/dotnet-decompiler/output/
 # threat-intel submission plans / human approvals / ledger (local audit trail)
 tools/threat-intel/data/submit/
 
+# Unpublished article drafts (Zenn etc.) — keep local, never push
+reports/writeups/drafts/
+
 # Logs
 tools/malware-fetch/logs/*
 !tools/malware-fetch/logs/.gitkeep
