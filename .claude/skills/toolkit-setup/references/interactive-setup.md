@@ -16,8 +16,8 @@ AskUserQuestion で各項目を**順番に**確認する:
 **Q-A: QUARANTINE_PASSWORD**
 - 用途説明: マルウェアファイルのAES-256暗号化パスワード。malware-fetch / ghidra-headless / malware-sandbox の全ツールで共通利用
 - 選択肢: 「自動生成（推奨）」「自分で入力する」
-- 自動生成: `openssl rand -base64 24` で生成 → ユーザーに表示して確認
-- 手動入力: Other で自由入力
+- 自動生成: 承認後にローカルで生成し、値を表示せず `.env` に書き込む。確認画面には設定済みかどうかだけを示す
+- 手動入力: ユーザーがローカルのエディタで `.env` に入力する。API キーとゲストパスワードも同じ方法を使う
 
 **Q-B: VIRUSTOTAL_API_KEY**
 - 用途説明: malware-fetch のハッシュチェック・VT連携に必要。無料アカウントで取得可
@@ -41,7 +41,7 @@ D-2. VM_VMX_PATH — デフォルトVM格納先の .vmx を探索して選択肢
 find "$USERPROFILE/Documents/Virtual Machines" -name "*.vmx" 2>/dev/null
 ```
 
-D-3. VM_GUEST_USER / VM_GUEST_PASS — Other で入力（パスワードはマスク表示）
+D-3. VM_GUEST_USER は必要に応じて確認し、VM_GUEST_PASS はローカルのエディタで入力する
 
 D-4. VM_GUEST_PROFILE — VM_GUEST_USER から `C:\Users\<user>` を自動推定して確認
 
@@ -50,7 +50,7 @@ D-5. VM_SNAPSHOT / VMRUN_TIMEOUT — デフォルト値（clean_with_tools / 30�
 
 ### 既存 .env の編集
 
-1. 現在の .env を読み取り、設定済み項目を一覧表示（**値はマスク**）
+1. `.env` の設定済み項目をローカルで確認し、ツール出力や画面には項目名とマスク済みの状態だけを表示する
 2. AskUserQuestion で「どの項目を変更しますか？」と確認（multiSelect）
 3. 選択項目のみ上記の質問フローで再設定
 4. 変更前後の差分を表示（値はマスク）し、確認を取ってから書き込む
@@ -66,7 +66,7 @@ ABUSECH_AUTH_KEY=********    (または: 未設定)
 VMRUN_PATH=<検出パス>        (または: 未設定)
 ...
 ```
-- 承認後に Write/Edit ツールで .env を作成/更新
+- 承認後に選択された項目だけを更新する。変更前に保護されたローカルバックアップを作り、生の値をツール引数や出力に含めない
 
 **エラー時**: Write が失敗した場合はパーミッションを確認。管理者権限が必要な場所に .env を作成しようとしていないか確認する。
 
@@ -210,7 +210,7 @@ Host-Only でない場合は警告表示。
 ============================================
   Toolkit Setup 完了サマリー
 ============================================
-[OK] .env               設定済み（QUARANTINE_PASSWORD, VT_API_KEY, ...）
+[OK] .env               設定済み（QUARANTINE_PASSWORD, VIRUSTOTAL_API_KEY, ...）
 [OK] Docker Desktop      起動中
 [OK] malware-fetch-browser   ビルド済み
 [OK] ghidra-headless     コンテナ実行中

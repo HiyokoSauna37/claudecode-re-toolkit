@@ -531,13 +531,25 @@ _auto_log() {
     # "ARM:LE:32:v8T" instead of "malware.exe".
     local target=""
     local _skip_next=0
+    local _redact_next=0
     local _arg
+    local log_args=("$subcmd")
     for _arg in "${@:2}"; do
+        if [ "$_redact_next" = "1" ]; then
+            log_args+=("[redacted]")
+            _redact_next=0
+            continue
+        fi
+        log_args+=("$_arg")
         if [ "$_skip_next" = "1" ]; then
             _skip_next=0
             continue
         fi
         case "$_arg" in
+            --zip-password)
+                _redact_next=1
+                continue
+                ;;
             --processor|--output-dir|--rules-dir)
                 _skip_next=1
                 continue
@@ -546,8 +558,9 @@ _auto_log() {
                 continue
                 ;;
         esac
-        target="$_arg"
-        break
+        if [ -z "$target" ]; then
+            target="$_arg"
+        fi
     done
     if [ -z "$target" ]; then
         return 0
@@ -567,7 +580,7 @@ _auto_log() {
                 "$(basename "$target")" "$(date '+%Y-%m-%d')" "$target" > "$logfile"
         fi
         printf '| %s | `bash tools/ghidra-headless/ghidra.sh %s` |\n' \
-            "$(date '+%H:%M:%S')" "$*" >> "$logfile"
+            "$(date '+%H:%M:%S')" "${log_args[*]}" >> "$logfile"
     } 2>/dev/null || true
     return 0
 }

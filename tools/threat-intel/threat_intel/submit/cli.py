@@ -67,7 +67,8 @@ def cmd_plan(manifest_path, only=None, skip=None):
     ready = _render(plan)
     _out()
     if ready:
-        _out("Nothing has been sent. Submissions are PUBLIC and PERMANENT.")
+        _out("No report or sample was published. Duplicate checks may have queried external services.")
+        _out("Submissions are PUBLIC and PERMANENT.")
         _out("To approve, the HUMAN runs (Claude is blocked from this step):")
         _out(f"  ! {CLI} submit approve {plan['plan_id']}")
         _out(f"Then: {CLI} submit run {plan['plan_id']}")

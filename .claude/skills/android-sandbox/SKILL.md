@@ -16,6 +16,12 @@ globs:
 
 ## 概要
 
+**検体を扱う前に隔離を確認する。** 現行の `install` / `apk-triage` / `analyze` に `.enc.gz` を渡すと、ホスト上に復号 APK ができる。暗号化したまま Docker / VM に渡して静的調査し、平文はホストへコピーしない。
+
+**悪性 APK にワンコマンドの `analyze` を使わない。** ネットワーク隔離と ADB の対象固定が組み込まれていない。動的解析へ進む前に、外部通信が遮断された専用エミュレータであることと、全コマンドで対象シリアルが固定されていることを確認する。両方を確認できない場合は静的調査や取得済みログを使う。
+
+**保存済みの CDP・logcat を報告するときは、宛先・時刻・根拠だけを抜き出す。** フォーム入力、POST 本文、URL クエリに含まれる認証情報は伏せる。
+
 Android SDK エミュレータ（ホスト上で直接実行）で APK マルウェアを動的解析する。
 VMware VM ではなくホストの Android エミュレータを使用するため、VT-x を直接利用でき高速。
 
@@ -23,7 +29,7 @@ VMware VM ではなくホストの Android エミュレータを使用するた�
 - **logcat + ネットワーク監視**: C2 通信先、URL、API 呼び出しの特定
 - **CDP (Chrome DevTools Protocol)**: WebView 内部のページ内容・JS ブリッジ・ネットワークリクエストの傍受
 - **Frida**: ランタイムフック（API フック、DEX ダンプ、暗号化通信の復号）
-- **APK 静的トリアージ**: マニフェスト解析、パッカー判定、JNI 文字列抽出
+- **APK 静的トリアージ**: パッカー判定と JNI 文字列抽出。パッケージ名と権限は別途マニフェストを確認する
 
 ## 前提条件
 
@@ -55,7 +61,7 @@ $AS stop                           # エミュレータ停止
 $AS status                         # 状態確認（adb devices + エミュレータ情報）
 
 # === APK 管理 ===
-$AS install <apk_path>             # APK インストール（.enc.gz 自動復号対応）
+$AS install <apk_path>             # 検証用の無害な APK のみ
 $AS uninstall <package>            # アンインストール
 $AS launch <package>               # アプリ起動（am start）
 
@@ -64,7 +70,7 @@ $AS net-isolate                    # ネットワーク遮断（airplane mode）
 $AS net-enable                     # ネットワーク有効化
 
 # === 解析 ===
-$AS analyze <apk> [wait=60]        # ワンコマンド解析
+$AS analyze <apk> [wait=60]        # 隔離を組み込んでいないため、無害な APK のみ
 $AS logcat [filter]                # logcat キャプチャ
 $AS screenshot [output]            # スクリーンショット
 $AS processes                      # プロセスリスト
@@ -81,7 +87,7 @@ $AS frida-hook <package> <script>  # Frida スクリプトでフック
 $AS frida-dump-dex <package>       # ランタイム DEX ダンプ（NMMP 等のアンパック）
 
 # === 静的トリアージ（エミュレータ不要）===
-$AS apk-triage <apk>              # マニフェスト解析 + JNI 文字列抽出 + パッカー判定
+$AS apk-triage <apk>              # JNI 文字列・ファイル構成からのパッカー判定
 ```
 
 ## 解析ワークフロー
@@ -90,14 +96,14 @@ $AS apk-triage <apk>              # マニフェスト解析 + JNI 文字列抽�
 
 ```
 1. $AS preflight                # 環境チェック
-2. $AS apk-triage sample.apk   # 静的トリアージ → パッケージ名取得
+2. # パッケージ名と権限は隔離環境でマニフェストを確認
 3. $AS start                    # エミュレータ起動（ブート完了まで待機、ブロッキング）
 4. $AS net-isolate              # ネットワーク遮断（airplane mode）
 5. $AS install sample.apk       # APK インストール
 6. $AS launch <package>         # アプリ起動（Step 2 で取得したパッケージ名）
 7. $AS screenshot               # 画面キャプチャ
 8. $AS net-enable               # ネットワーク有効化（通信先の特定が必要な場合）
-9. $AS logcat "chromium\|http\|url\|mega\|snap"  # logcat で通信を監視（grep パターン）
+9. $AS logcat "chromium|http|url|mega|snap"  # logcat で通信を監視（grep -iE）
 10. $AS cdp-inspect <package>   # WebView内部を調査（JSブリッジ検出）
 11. $AS frida-hook <package> hook_webview.js  # URLロード・暗号化をフック
 12. $AS stop                    # エミュレータ停止
@@ -105,7 +111,7 @@ $AS apk-triage <apk>              # マニフェスト解析 + JNI 文字列抽�
 
 **`start` コマンドはブロッキング**: 内部で `adb wait-for-device` + `getprop sys.boot_completed` をポーリングし、ブート完了後に返る。
 
-**`logcat` の filter**: grep 互換の正規表現パターンを渡す。例: `"chromium\|http\|url"` で URL 関連ログをフィルタ。フィルタなしで全ログを取得。
+**`logcat` の filter**: 拡張正規表現を渡す。`"chromium|http|url"` で URL 関連ログを絞る。フィルタを省くと全ログを取得する。
 
 ### NMMP パッカー解析フロー
 
@@ -120,7 +126,7 @@ NMMP（nmm-protect）等のパッカーで保護された APK の場合:
 
 2. $AS start                    # エミュレータ起動（ブート完了まで待機）
 3. $AS net-isolate              # ネットワーク遮断
-4. $AS install sample.apk       # APK インストール（.enc.gz の場合も自動復号対応）
+4. $AS install sample.apk       # 無害な検証用 APK の場合
 
 5. $AS frida-setup              # Frida server をエミュレータに導入・起動
 
@@ -142,18 +148,18 @@ NMMP（nmm-protect）等のパッカーで保護された APK の場合:
 8. $AS stop                     # エミュレータ停止
 ```
 
-**`apk-triage` は `.enc.gz` にも対応**: 内部で自動復号してトリアージを実行する（`QUARANTINE_PASSWORD` が必要）。
+**`apk-triage` は AndroidManifest.xml を解析しない。** パッケージ名や権限が必要なら、隔離環境で APK のマニフェストを別途読み取る。
 
 ### WebView フィッシング解析フロー
 
 WebView で正規サイトを表示してクレデンシャルを窃取するタイプ:
 
 ```
-1. $AS apk-triage sample.apk    # 静的トリアージ → パッケージ名取得
+1. # 隔離環境でマニフェストを確認してパッケージ名を得る
 2. $AS start --gui               # エミュレータ起動（GUI 表示、ブート完了まで待機）
 3. $AS net-isolate               # ネットワーク遮断（初期状態は安全側）
 4. $AS install sample.apk        # APK インストール
-5. $AS net-enable                # ネットワーク有効化（WebView が正規サイトをロードするため必要）
+5. # 外部通信を遮断したまま、取得済みの画面・通信記録やローカルの模擬応答を使う
 6. $AS launch <package>          # アプリ起動
 7. $AS screenshot                # 初期画面キャプチャ
 8. $AS cdp-inspect <package>     # CDP 接続 → JS ブリッジ検出
@@ -189,20 +195,7 @@ VMware VM と異なり、エミュレータはホスト OS 上で直接実行さ
 
 ## .enc.gz ファイルの取り扱い
 
-malware-fetch で取得した `.enc.gz` ファイルは以下の手順で処理:
-
-```bash
-# Ghidra Docker コンテナ内で復号 → adb push
-bash tools/ghidra-headless/ghidra.sh decrypt <file.enc.gz>
-docker cp ghidra-headless:/tmp/<decrypted> /tmp/sample.apk
-$AS install /tmp/sample.apk
-rm /tmp/sample.apk  # ホスト上の復号済みファイルは即削除
-```
-
-または Python スクリプトでメモリ上復号 → 一時ファイル → adb install → 即削除:
-```bash
-$AS install <file.enc.gz>  # 自動復号 + インストール + 一時ファイル削除
-```
+`.enc.gz` は暗号化したまま Docker / VM へ渡し、ホスト非共有の作業領域に復号する。平文 APK や DEX をホストへ取り出さず、必要な解析結果だけを回収する。安全な経路が用意できるまでは静的調査に留める。
 
 ## CDP (Chrome DevTools Protocol) 詳細
 
@@ -259,21 +252,15 @@ NMMP 等のパッカーが復号した DEX をメモリからダンプ。
 - **エミュレータのサンドボックス検知**: マルウェアがエミュレータを検知して動作を制限することがある。`isSandboxEnvironment` 等の文字列が見つかった場合は `bypass_root_detect.js` を使用。検知項目の実例: `/dev/socket/qemud`, `/dev/qemu_pipe`, `/dev/goldfish_pipe`, `ro.kernel.qemu`, `qemu.sf.lcd_density`
 - **NMMP パッカーの DEX ダンプが 0 件になる場合**: NMMP は `InMemoryDexClassLoader` を使わず、ネイティブコード内で独自に DEX をロードする。`dump_dex.js` の Java レベルフックでは捕まらない。この場合は CDP + logcat で C2/通信先を直接監視する方が有効
 - **VMware との排他**: エミュレータ起動中は VMware VM の同時起動を避ける（VT-x 競合の可能性）
-- **ホスト上の復号ファイル**: APK の復号は一時的にホスト上にファイルが存在する。`adb install` 完了後に即削除すること
 - **CDP の「次へ」ボタン**: 楽天等の React SPA では「次へ」が `<button>` ではなく `<div>` の場合がある。`document.querySelectorAll('button')` で見つからない場合は XPath (`//*[contains(text(),"次")]`) で検索
 
 ## 2026-09 解析事例: 楽天偽装 APK での知見
 
-### 判明した手順
+### 過去の観測
+
+この事例では NMMP の特徴、パッケージ名 `org.mega.fast.snap` と権限 5 件を確認した。パッケージ名と権限はマニフェストから取得する。以下は当時の観測例で、実行前に冒頭の隔離・対象固定を確認する。
 
 ```bash
-# 1. 静的トリアージ
-$AS apk-triage sample.apk.enc.gz
-# → NMMP パッカー確定、パッケージ名 org.mega.fast.snap、権限5つのみ
-
-# 2. エミュレータ起動 + インストール
-$AS start --gui
-$AS install sample.apk.enc.gz
 
 # 3. Frida バイパス (adb root 必須!)
 adb root                          # ← これがないと frida-server が動かない

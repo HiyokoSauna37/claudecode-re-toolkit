@@ -1,11 +1,11 @@
 # IOC / 検体の公開投稿 (`intel-cli.py submit`)
 
 解析で確定した IOC と検体を、ThreatFox / URLhaus / AbuseIPDB / MalwareBazaar / VirusTotal / Triage に投稿する。
-**投稿はすべて公開され、取り消せない。** そのため「マニフェスト → plan（dry-run） → 人間の承認 → run」の 4 段で進める。
+**投稿はすべて公開され、取り消せない。** マニフェストを作り、plan、人間の承認、run の順に進める。
 
 ```
 reports/campaigns/<name>.iocs.yaml
-        │  submit plan   … 検証・ガード・重複照会。何も送らない。plan_id を発行
+        │  submit plan   … 検証・ガード・重複照会。対象によって IOC を照会先へ送る。投稿は run の段階
         ▼
 data/submit/plans/<id>.json   (送信内容そのもの。digest 付きで改ざん検知)
         │  submit approve  … 人間専用。Claude は hook でブロックされる

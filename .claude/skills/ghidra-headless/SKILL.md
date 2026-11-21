@@ -4,21 +4,24 @@ description: >-
   Ghidra Headless AnalyzerをDockerコンテナで実行し、PE/ELF/.NET/ARM バイナリの静的解析・デコンパイル・インポート分析を行う。quarantine 由来 .enc.gz の自動復号にも対応。
   Use when: バイナリ解析（EXE/DLL/.NET/ELF/ARM）, デコンパイル, 静的解析, reverse engineering, マルウェア解析, CTF reversing, quarantine .enc.gz 解析
   Do NOT use for: 動的解析（malware-sandbox）, メモリダンプ解析（memory-forensics）, Android APK/DEX（本ツールに APK 展開・DEX ローダ経路は無い。pe-triage は PE 前提、zip 展開は最大ファイルを拾うだけ）
-instructions: |
-  実行フロー:
-  1. コンテナ確認: docker inspect -f '{{.State.Status}}' ghidra-headless → 停止中なら bash tools/ghidra-headless/ghidra.sh start
-     （`docker inspect` 自体が npipe 接続エラーなら Docker Desktop ごと停止中。起動して daemon の応答を待ってから再実行:
-     `powershell -c 'Start-Process "C:\Program Files\Docker\Docker\Docker Desktop.exe"'` → `until docker info >/dev/null 2>&1; do sleep 5; done`。実測 60〜90 秒）
-  2. 解析対象のバイナリパスを確認（.enc.gz は全コマンドが自動復号するのでそのまま渡す。ホスト上で openssl/gunzip/decrypt_quarantine.py は絶対に使わない）
-  3. .NET判別（`pe-triage` 出力の `.NET:` 行、VTタグ assembly/msil、CAPA バックエンド dotnet のいずれか）→ Ghidra の decompile はスキップし dotnet-decompile を使う
-  4. 実行モード選択:
-     - 単発調査（imports/strings/xrefs 等の特定コマンドだけ欲しい）→ ショートカット（body「解析起点の選択」A-C参照）
-     - フル解析（ファミリ判定・レポートまで）→ analyze-full パイプライン（Phase 0-7: triage → FLOSS → viz → YARA → CAPA → Ghidra → IOC → 分類。**シーケンシャル実行**）
-     - analyzer+reviewer の詳細プロンプトは [references/reviewer-prompts.md](references/reviewer-prompts.md)
-  5. **コマンドログは自動記録** — `ghidra.sh` を実行するたびに `tools/ghidra-headless/logs/YYYYMMDD_<target>.md` に自動追記される。手動記述不要。確認は `ghidra.sh log-show <binary>`
-  6. 「終了」「exit」宣言時: git add logs/ && commit && push
-  ツールパス: tools/ghidra-headless/ghidra.sh
 ---
+
+## 実行フロー
+
+**平文の検体・抽出ペイロードは Docker / VM 内のホスト非共有領域に置く。ログはローカルで管理する。**
+
+1. コンテナ確認: docker inspect -f '{{.State.Status}}' ghidra-headless → 停止中なら bash tools/ghidra-headless/ghidra.sh start
+   （`docker inspect` 自体が npipe 接続エラーなら Docker Desktop ごと停止中。起動して daemon の応答を待ってから再実行:
+   `powershell -c 'Start-Process "C:\Program Files\Docker\Docker\Docker Desktop.exe"'` → `until docker info >/dev/null 2>&1; do sleep 5; done`。実測 60〜90 秒）
+2. 解析対象のバイナリパスを確認（Docker 内で解析するコマンドには `.enc.gz` をそのまま渡す。ホスト上で復号しない）
+3. .NET判別（`pe-triage` 出力の `.NET:` 行、VTタグ assembly/msil、CAPA バックエンド dotnet のいずれか）→ Ghidra の decompile はスキップし dotnet-decompile を使う
+4. 実行モード選択:
+   - 単発調査（imports/strings/xrefs 等の特定コマンドだけ欲しい）→ ショートカット（body「解析起点の選択」A-C参照）
+   - フル解析（ファミリ判定・レポートまで）→ analyze-full パイプライン（Phase 0-7: triage → FLOSS → viz → YARA → CAPA → Ghidra → IOC → 分類。**シーケンシャル実行**）
+   - analyzer+reviewer の詳細プロンプトは [references/reviewer-prompts.md](references/reviewer-prompts.md)
+5. **コマンドログは自動記録** — `ghidra.sh` を実行するたびに `tools/ghidra-headless/logs/YYYYMMDD_<target>.md` に自動追記される。手動記述不要。確認は `ghidra.sh log-show <binary>`
+
+ツールパス: tools/ghidra-headless/ghidra.sh
 
 ## コマンド早見表
 
@@ -109,6 +112,7 @@ bash tools/ghidra-headless/ghidra.sh dotnet-types <binary|file.enc.gz>        # 
 - `<binary>.<ext>_decompiled.json` — デコンパイル結果のサマリ
 
 **完了待ちのポーリング対象にするのはこの実パス**（後述「出力先」節の Ghidra 系 / ツール系の 2 規則は .NET には当てはまらない）。
+同じ検体の `dotnet-decompile` と `dotnet-metadata` は一時ファイルを共有するため、1 つずつ実行する。
 
 ### 出力読み取り（MSYS変換回避、必ずこれを使う）
 ```bash
@@ -200,14 +204,14 @@ docker compose -f tools/dotnet-decompiler/docker-compose.yml up -d --build
 
 **.NET でも `pe-triage` / `yara-scan` / `capa` は有効**: .NET バイナリは PE ヘッダを持つので、ConfuserEx / Costura / SmartAssembly 等の .NET パッカー検出は pe-triage で可能。YARA/CAPA も .NET に対応（CAPA は `dotnet` バックエンドを使う）。
 
-**.NET では `analyze-full` を使わない**: analyze-full の Phase 1 には Ghidra analyze が含まれるが CLR は解析できず Ghidra 出力は無意味になる。.NET では個別コマンド（`pe-triage` → `yara-scan` + `capa` + `dotnet-decompile` + `dotnet-metadata` を並列）→ 最後に watchtowr-report スキルで統合、という流れにする。
+**.NET は個別コマンドで解析する。** `pe-triage` で CLR を確認し、依頼に必要な `yara-scan`、`capa`、`dotnet-decompile`、`dotnet-metadata` を順番に実行する。同じ名前の暗号化検体や ZIP の解析も直列にする。
 
 **`dotnet-types` は既定では不要**。`dotnet-decompile` が全 C# ソースを出すので型一覧は冗長になる。
 使うのは (a) デコンパイルが途中で失敗した / (b) ソースを読む前に型の全体像だけ先に見たい、のどちらかのとき。
 
 **並列実行手段:** Claude Code では Agent tool を使って subagent を 1 メッセージ内で複数 dispatch するのが推奨（独立コマンドは並列実行される）。手動の bash 実行なら別ターミナル or `&` でバックグラウンド化。
 
-**Ghidra コマンドの並列実行は OK**（KB-23）: `ghidra.sh` の `run_headless` は per-invocation で project name に PID + nano-second suffix を付与するので、`yara-scan` / `capa` / `imports` / `strings` 等の同時実行で `LockException: Unable to lock project! /analysis/projects/tmp_project` は出ない。古いプロジェクトは `-deleteProject` で自動削除される。
+**入力と出力が独立している場合に限って並列実行できる。** Ghidra のプロジェクト名は各実行で固有だが、復号はファイル名を基にした同じ一時パスを使う。ZIP 展開先も共通。入力名が同じときや ZIP の場合は各処理の終了を待つ。
 
 ## Go バイナリ解析
 
@@ -411,9 +415,9 @@ malware-fetch(バイナリ取得) / forensic-analysis(不審EXE深掘り) / memo
 
 | ツール | 用途 |
 |---|---|
-| `tools/ghidra-headless/scripts/lnk-parser.py` | LNK構造パース（パディング難読化検出、埋込PE/PDF抽出、MachineID 取得）。**pylnk3 は `ansi` encoding バグで使えないので必ずこちらを使う** |
+| `tools/ghidra-headless/scripts/lnk-parser.py` | LNK構造パース（パディング難読化検出、埋込PE/PDF抽出、MachineID 取得）。`--extract-embedded` はコンテナ内だけで実行し、出力先はホスト非共有の `/tmp` 配下にする |
 | `tools/ghidra-headless/scripts/pe-encrypt.py` | Ghidra コンテナ内ファイル → quarantine .enc.gz 形式 (AES-256-CBC + gzip)。ホスト経由で VM に渡す時の標準手段 |
-| `tools/ghidra-headless/scripts/chunk-extract.py` | PE .rdata から RVA+size 指定で埋込バイナリ抽出 (entropy/magic付き)。Rust/Go マルウェアの DAT_xxx 展開用 |
+| `tools/ghidra-headless/scripts/chunk-extract.py` | PE の `.rdata` から埋込バイナリを抽出。コンテナ内で `/opt/ghidra-scripts/chunk-extract.py` を使い、`--out` / `--outdir` はホスト非共有の `/tmp` 配下に指定する |
 | `tools/ghidra-headless/scripts/adaptix_profile_extract.py` (Python) | AdaptixC2 beacon 内蔵 profile を抽出し RC4 復号。`ghidra.sh adaptix-profile` 経由で呼び出される。`--profile-rva` / `--profile-size` で `getProfile()` の指す RVA とサイズを上書き可（KB-22） |
 | `tools/ghidra-headless/scripts/adaptix_hash_match.py` (Python) | AdaptixC2 の動的 API 解決ハッシュ → API 名にマップ（`FUN_1400111a1(handle, 0x...)` パターンを抽出）。バンドル済 `adaptix_apidefines.h` (GPL-3.0 snapshot) と照合 |
 | `tools/bb-toolkit/go/bb-gcs-enum` (Go) | GCS 公開バケット全列挙 + ダウンロード (LOLCloud 偵察) |

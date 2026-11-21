@@ -6,25 +6,28 @@ description: |
   Do NOT use for: マルウェア解析の実行（malware-fetch / ghidra-headless / malware-sandbox を使用）、検体固有の解析失敗の調査
   （※ Docker イメージ・コンテナ・依存パッケージなど**環境側の不調**は本スキルの Troubleshooting 節が扱う。
   「特定の検体だけ解析が失敗する」は環境ではなく解析側の問題なので各解析スキルへ回す）
-instructions: |
-  1. Phase 0 — 環境診断: 以下を並列実行して現状を把握
-     .env存在確認, docker info, docker images/ps, vmrun.exe の存在確認, go/python version, yara-rules/ 存在, pip show yara-python/flare-capa/flare-floss/dumpulator
-     （実行するコマンドは本文 Step 1 のコードブロックが正）
-  2. Phase 1 — モード選択: AskUserQuestion で2問確認
-     Q1: セットアップモード（対話型 or 一括）をメリット・デメリット付きで提示
-     Q2: セットアップ範囲（multiSelect）。診断結果に基づきセットアップ済み項目を明記
-  3. Phase 2 — 実行: 選択モードの reference を Read して手順に従う
-     対話型 → references/interactive-setup.md
-     一括型 → references/batch-setup.md
-  CRITICAL: 環境を変更する操作の前には必ず AskUserQuestion でユーザー確認を取ること
-  CRITICAL: .env のパスワード・APIキーは画面にマスク表示（****）すること
-metadata:
-  author: shimakaze-git
-  version: 1.0.0
-  category: setup
 ---
 
 # Toolkit Setup
+
+## 実行フローと安全規則
+
+1. Phase 0 — 環境診断: 以下を並列実行して現状を把握
+   .env存在確認, docker info, docker images/ps, vmrun.exe の存在確認, go/python version, yara-rules/ 存在, pip show yara-python/flare-capa/flare-floss/dumpulator
+   （実行するコマンドは本文 Step 1 のコードブロックが正）
+2. Phase 1 — モード選択: AskUserQuestion で2問確認
+   Q1: セットアップモード（対話型 or 一括）をメリット・デメリット付きで提示
+   Q2: セットアップ範囲（multiSelect）。診断結果に基づきセットアップ済み項目を明記
+3. Phase 2 — 実行: 選択モードの reference を Read して手順に従う
+   - 対話型 → [対話型セットアップ](references/interactive-setup.md)
+   - 一括型 → [一括セットアップ](references/batch-setup.md)
+
+- **CRITICAL** 環境を変更する操作の前には必ず AskUserQuestion でユーザー確認を取る。
+- **CRITICAL** `.env` の中身や生のパスワード・APIキーを画面・チャット・ツール出力に出さない。差分を示すときは値を `****` でマスクする。
+
+初回セットアップの計画だけを求められた場合も、回答に「変更前に承認」「秘密値はローカル入力」を含める。同梱バイナリを使用する計画では Go 未導入を不足項目に入れない。
+
+`VT キー` は `.env.example` にある `VIRUSTOTAL_API_KEY` を指す。既存ファイルの変更案には正式な変数名を使う。
 
 ## Instructions
 
@@ -34,7 +37,7 @@ metadata:
 
 ```bash
 # 並列実行（すべて独立）
-test -f .env && echo present                                      # .env 存在（**中身は絶対に表示しない** — 上の CRITICAL 参照）
+test -f .env && echo present                                      # .env は存在だけを確認
 docker info > /dev/null 2>&1                                      # Docker Desktop
 docker images malware-fetch-browser:latest --format "{{.ID}}"         # malware-fetch イメージ
 docker images ghidra-headless-ghidra:latest --format "{{.ID}}"       # ghidra-headless イメージ
@@ -59,15 +62,17 @@ pip show dumpulator 2>/dev/null                                   # dumpulator (
 | `docker images ... --format "{{.ID}}"` | ID が出力される | 出力が空 |
 | `docker ps -a --filter ...` | Status が **`Up ...` で始まる** | 出力が空（未作成）**または `Exited` / `Created`（作成済みだが起動していない）** |
 | `ls .../vmrun.exe` | パスが出力される | 出力が空 |
-| `go version` / `python --version` | バージョン文字列が出て、かつ **Python 3.10+ / Go 1.26+** を満たす | 出力が空、または要求バージョン未満 |
+| `python --version` | Python 3.10+ | 出力が空、または要求バージョン未満 |
+| `go version` | ソースからビルドする場合に Go 1.26+ | ソースからビルドする場合のみ不足と判定。同梱バイナリ利用時は任意 |
 | `ls .../yara-rules/` | 1件以上のエントリ | 出力が空 |
 | `pip show <pkg>` | `Name:` 行を含む出力がある | **出力が空**（未インストール。`pip show` は未インストールでも exit 0 を返すので exit code で判定しないこと） |
 
-**`docker info` が NG のときは、image / container の3行を `[!!]`（未ビルド・未作成）と判定してはいけない。**
+**`docker info` が NG のときは、3 イメージと 1 コンテナを `[??] 判定不能` とする。**
 デーモンが止まっていると `docker images` / `docker ps` はどちらも空を返すので、「未ビルド」と「判定不能」が区別できない。
 この場合は `[??] 判定不能（Docker 停止中）` と表示する。
 なお Docker Desktop の起動直後はデーモンがまだ応答しないことがあるため、`docker info` が NG なら
 **1 度だけ数秒待って再実行**し、それでも NG のときに初めて「停止中」と確定させる。
+復旧後に診断をやり直し、実際に必要な変更を確認して承認を取ってから実行する。
 
 `.env` の判定は **ファイルが存在するかどうかだけ**で、各キーに値が入っているかは見ていない。
 「どの API が実際に使えるか」まで必要なら threat-intel スキルの `status` か
@@ -299,13 +304,13 @@ Q2 のどの行にも対応しない（`[!!]` なら Q2 ではなくユーザー
 
 ```
 症状: .env の値が意図せず変更された
-解決: git checkout .env で復元（.gitignoreに含まれる場合は不可）
-予防: このスキルは既存 .env を上書きせず差分提案のみ行う設計
+解決: 変更前に保管したローカルバックアップから復元する。`.env` は Git 管理外のため、バックアップはリポジトリ外で保護する。
+予防: 変更前に差分をマスクして提示し、承認後に対象キーだけを更新する
 ```
 
 ## セキュリティルール
 
 - .env 内の機密情報（パスワード、APIキー）は表示時に必ずマスクする
-- 既存の .env がある場合は上書きせず、差分のみ提案する
+- 既存の .env は、承認されたキーだけを更新する。秘密の入力はユーザーがローカルエディタで行う
 - Docker イメージの再ビルドは --no-cache の要否をユーザーに確認する
 - VMware VM の起動・操作は必ずユーザー確認を取る

@@ -16,7 +16,7 @@ post-execution-audit.md の F/G を超える高度な静的解析手順。
 |---|---|---|
 | `docker exec ghidra-headless bash -c '...'` | PowerShell | Git Bash がコンテナ内パス (`/opt/...`) を Windows パスに変換してしまうため |
 | `bash tools/ghidra-headless/ghidra.sh ...` | Bash (Git Bash) | ghidra.sh 自体が bash スクリプト。引数のホスト側パスは正しく処理される |
-| PowerShell スクリプト（デコード等） | PowerShell | .NET ライブラリ使用 |
+| ペイロードのデコード・バイナリ出力 | Docker / VM 内 | 平文をホスト非共有領域に留めるため |
 
 ## 1. デコンパイルターゲットの選定
 
@@ -78,7 +78,7 @@ strings 出力は切り詰められるため、Ghidraスクリプトで全文抽
 
 ```powershell
 # PowerShell から実行（Git Bash はコンテナパスを変換するため）
-docker exec ghidra-headless bash -c '/opt/ghidra/support/analyzeHeadless /analysis/projects ghidra_project -process <name>.dll -noanalysis -scriptPath /opt/ghidra-scripts -postScript extract_string.py /analysis/output/full_string.txt 0x<ADDRESS>'
+docker exec ghidra-headless bash -c '/opt/ghidra/support/analyzeHeadless /analysis/projects ghidra_project -process <name>.dll -noanalysis -scriptPath /opt/ghidra-scripts -postScript extract_string.py /tmp/full_string.txt 0x<ADDRESS>'
 ```
 
 ADDRESS は strings 出力の先頭列にある **絶対仮想アドレス** をそのまま使う。
@@ -94,41 +94,19 @@ strings 出力形式: `0x180045000     "QUFBQ..."` — この `0x180045000` 部�
 | Double | Base64 | XOR/RC4 | - | shellcode/PE |
 | Single + compression | Base64 | inflate/LZNT1 | - | PE/config |
 
-デコード手順 (PowerShell):
-
-```powershell
-# Layer 1: Base64
-$layer1 = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($raw))
-
-# Layer 2: Base64 again (if layer1 matches ^[A-Za-z0-9+/=]+$)
-$layer2 = [Text.Encoding]::ASCII.GetString([Convert]::FromBase64String($layer1))
-
-# Layer 3: Hex to bytes (if layer2 matches ^[0-9A-Fa-f]+$ and starts with 4D5A)
-$bytes = New-Object byte[] ($layer2.Length / 2)
-for ($i = 0; $i -lt $layer2.Length; $i += 2) {
-    $bytes[$i/2] = [Convert]::ToByte($layer2.Substring($i, 2), 16)
-}
-
-# MZ check
-[Text.Encoding]::ASCII.GetString($bytes[0..1])  # should be "MZ"
-```
+Ghidra コンテナの `/tmp` にある文字列をコンテナ内でデコードする。三層形式では Base64 → Base64 → Hex の順に処理し、先頭が `MZ` か照合する。中間データと抽出物の出力先も `/tmp` 配下とする。VM で処理する場合もゲストのホスト非共有領域を使う。
 
 **サイズヒントの活用**: デコンパイル中に `local_xx = 0xNNNN` のような定数が見つかったら、デコード結果のバイト数と照合する。一致すればデコードが正しい証拠。
 
 ### 2.4 抽出PEの解析
 
 ```bash
-# Ghidra input にコピーして pe-triage
-cp <extracted>.bin tools/ghidra-headless/input/<name>.dll
-bash tools/ghidra-headless/ghidra.sh pe-triage tools/ghidra-headless/input/<name>.dll
-
-# Subsystem: Native なら カーネルドライバ
-# full analyze で xrefs/strings/imports を取得
-bash tools/ghidra-headless/ghidra.sh analyze tools/ghidra-headless/input/<name>.dll
-
-# 解析後は input から削除
-rm tools/ghidra-headless/input/<name>.dll
+# コンテナ内にある抽出物のパスを指定
+bash tools/ghidra-headless/ghidra.sh pe-triage /tmp/extracted.dll
+bash tools/ghidra-headless/ghidra.sh analyze /tmp/extracted.dll
 ```
+
+`/analysis/input` と `/analysis/output` はホスト共有。抽出物は解析後にコンテナ内で削除し、共有側には解析結果だけを残す。
 
 ## 3. カーネルドライバ解析
 
