@@ -38,6 +38,12 @@ Specific service queries (when you know exactly what you want):
     intel-cli.py malpedia {actors|families|payloads|actor|family|yara|sample} [<value>]
     intel-cli.py malshare {list|hash} [<value>]
 
+IOC / sample submission (human-gated; see references/ioc-submission.md):
+    intel-cli.py submit plan <manifest.iocs.yaml>  → dry-run: guards + dedup + exact payloads
+    intel-cli.py submit approve <plan_id>          → HUMAN ONLY (blocked for Claude by hook)
+    intel-cli.py submit run <plan_id>              → send the approved payloads
+    intel-cli.py submit show <plan_id> | submit ledger
+
 Other:
     intel-cli.py ioc extract <file|url>       → IOC extract (txt/pdf/eml/url)
     intel-cli.py yara <rules> <target>        → YARA scan
@@ -82,6 +88,7 @@ KNOWN_CMDS = {
     'ipinfo', 'bgpview', 'whois', 'nist', 'vulncheck',
     'malpedia', 'malshare',
     'correlate-hash', 'correlate-ip', 'ioc', 'yara', 'attack', 'report',
+    'submit',
 }
 
 
@@ -204,6 +211,25 @@ def _build_parser():
 
     # ─── per-service subcommands (mostly unchanged) ───
     _build_service_parsers(sub)
+
+    # ─── IOC / sample submission (human-gated) ───
+    sm = sub.add_parser('submit', help='Submit IOCs/samples to ThreatFox/URLhaus/AbuseIPDB/MalwareBazaar/VT/Triage',
+        description='Human-gated public submission driven by an IOC manifest (*.iocs.yaml). '
+                    'plan = dry-run (nothing sent); approve = human only; run = send approved payloads.',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="EXAMPLES:\n"
+               "  submit plan reports/campaigns/20261121_x.iocs.yaml\n"
+               "  submit plan m.iocs.yaml --only threatfox,urlhaus\n"
+               "  submit show <plan_id>\n"
+               "  submit run <plan_id>\n"
+               "  submit ledger --last 50\n\n"
+               "APPROVAL (human only, type it yourself with the ! prefix):\n"
+               "  ! python tools/threat-intel/intel-cli.py submit approve <plan_id>")
+    sm.add_argument('action', choices=['plan', 'show', 'approve', 'run', 'ledger'])
+    sm.add_argument('value', nargs='?', default=None, help='manifest path (plan) or plan id')
+    sm.add_argument('--only', default='', help='comma-separated services to include')
+    sm.add_argument('--skip', default='', help='comma-separated services to exclude')
+    sm.add_argument('--last', type=int, default=20, help='ledger rows to show')
     return p
 
 
@@ -480,6 +506,9 @@ def _dispatch(args):
     val = getattr(args, 'value', None)
     action = getattr(args, 'action', None)
 
+    if cmd == 'submit':
+        return _submit(args)
+
     # Auto-detect & smart aliases
     if cmd == 'auto':
         return _cmd_auto(val)
@@ -546,6 +575,14 @@ def _dispatch(args):
 # ─────────────────────────────────────────────────────────────────
 # Auto / status / cache
 # ─────────────────────────────────────────────────────────────────
+
+def _submit(args):
+    from threat_intel.submit.cli import dispatch as submit_dispatch
+    if args.action != 'ledger' and not args.value:
+        _exit_input_error(f"submit {args.action} needs a {'manifest path' if args.action == 'plan' else 'plan id'}")
+    split = lambda v: [x.strip() for x in (v or '').split(',') if x.strip()]
+    return submit_dispatch(args.action, args.value, only=split(args.only), skip=split(args.skip), last=args.last)
+
 
 def _cmd_auto(val):
     if not val:

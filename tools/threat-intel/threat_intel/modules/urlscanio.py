@@ -4,6 +4,7 @@ Endpoints: /scan (POST), /result/<uuid>, /search.
 Never raises. Missing key produces error dict.
 """
 
+import os
 from urllib.parse import quote
 
 from ..lib.session import create_session
@@ -13,6 +14,15 @@ from ..lib.display import error, info, section, field
 from ..lib.output import collector
 
 MAX_SEARCH_RESULTS = 30
+VALID_VISIBILITY = ('public', 'unlisted', 'private')
+
+
+def scan_visibility():
+    """Default 'unlisted': lure/phishing URLs often embed victim e-mails or tokens,
+    and a 'public' scan publishes them on urlscan.io's front page and search.
+    Override with URLSCANIO_VISIBILITY=public|unlisted|private."""
+    v = os.environ.get('URLSCANIO_VISIBILITY', 'unlisted').strip().lower()
+    return v if v in VALID_VISIBILITY else 'unlisted'
 
 
 class URLScanIOExtractor:
@@ -49,7 +59,7 @@ class URLScanIOExtractor:
             session.headers['Content-Type'] = 'application/json'
             r = session.post(
                 f"{self.base}/scan/",
-                json={'url': url, 'visibility': 'public'},
+                json={'url': url, 'visibility': scan_visibility()},
                 timeout=30,
             )
             err = self._check(r)

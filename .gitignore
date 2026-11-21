@@ -60,6 +60,9 @@ tools/malware-sandbox/output/*
 !tools/malware-sandbox/output/.gitkeep
 tools/dotnet-decompiler/output/
 
+# threat-intel submission plans / human approvals / ledger (local audit trail)
+tools/threat-intel/data/submit/
+
 # Logs
 tools/malware-fetch/logs/*
 !tools/malware-fetch/logs/.gitkeep

@@ -123,6 +123,29 @@ report html|pdf <out> [--from <result.json>]
 
 Run `intel-cli.py <subcommand> --help` for examples on any subcommand.
 
+## IOC / sample submission (human-gated)
+
+Publishes confirmed IOCs/samples to ThreatFox, URLhaus, AbuseIPDB, MalwareBazaar,
+VirusTotal and Triage from a per-report manifest (`reports/campaigns/<name>.iocs.yaml`).
+
+```
+submit plan <manifest>     # dry-run: guards + dedup pre-check + exact payloads; nothing is sent
+submit approve <plan_id>   # HUMAN ONLY - a PreToolUse hook blocks Claude from this step
+submit run <plan_id>       # sends exactly the approved payloads, once each (no retries)
+submit show <plan_id> | submit ledger [--last N]
+```
+
+- Default-deny: only `tlp: clear` + `source: osint` manifests are submittable.
+- Guards: non-global/FakeNet IPs, legitimate-infra allowlist (`data/submit_allowlist.txt`),
+  victim identifiers in URLs, local paths / e-mails / account names in public text,
+  URLhaus liveness (`verified_online_at` <= 48h), MalwareBazaar 10-day rule.
+- Phishing URLs/domains are routed to MANUAL (URLhaus/ThreatFox do not accept phishing).
+- Samples are decrypted **only inside** the `ti-sample-uploader` container (`uploader/`),
+  never on the host. Plans, approvals and the ledger live in `data/submit/` (gitignored).
+
+Full guide: `.claude/skills/threat-intel/references/ioc-submission.md`.
+Tests: `python -m pytest tools/threat-intel/tests -q`
+
 ## API keys
 
 Configure in repository-root `.env` — see `.env.example` and

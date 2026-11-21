@@ -8,3 +8,4 @@ weasyprint>=57.0
 yara-python>=4.2.0
 python-whois>=0.9.4
 ipwhois>=1.2.0
+PyYAML>=6.0          # submit: *.iocs.yaml manifests (.json works without it)

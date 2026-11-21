@@ -1,0 +1,94 @@
+# Legitimate infrastructure that must never be submitted as a domain/IP IOC.
+# Malware contacts these constantly (connectivity checks, CDNs, IP lookup, dead drops),
+# so they show up in sandbox traffic but reporting them is a false positive.
+#
+# - domain / ip IOCs matching an entry (or a subdomain of it) are BLOCKED.
+# - url IOCs on these hosts are only WARNED: a specific URL on abused legitimate
+#   hosting (e.g. a payload on githubusercontent / discord CDN) is still a valid
+#   URLhaus submission.
+#
+# One entry per line. Lines starting with # are comments.
+
+# Big tech / OS telemetry & connectivity checks
+google.com
+googleapis.com
+gstatic.com
+googleusercontent.com
+gvt1.com
+microsoft.com
+windows.com
+windowsupdate.com
+msftconnecttest.com
+msftncsi.com
+live.com
+office.com
+office.net
+azure.com
+azureedge.net
+bing.com
+apple.com
+icloud.com
+mzstatic.com
+amazon.com
+amazonaws.com
+cloudfront.net
+facebook.com
+fbcdn.net
+
+# CDNs / hosting / dev platforms
+cloudflare.com
+cloudflare.net
+akamai.net
+akamaiedge.net
+akamaihd.net
+fastly.net
+github.com
+githubusercontent.com
+gitlab.com
+bitbucket.org
+dropbox.com
+dropboxusercontent.com
+discord.com
+discordapp.com
+discordapp.net
+discord.gg
+telegram.org
+t.me
+pastebin.com
+steamcommunity.com
+
+# PKI / OCSP
+digicert.com
+letsencrypt.org
+lencr.org
+sectigo.com
+globalsign.com
+verisign.com
+symcd.com
+
+# IP / geo lookup services
+ipify.org
+ipinfo.io
+ip-api.com
+ifconfig.me
+icanhazip.com
+myexternalip.com
+wtfismyip.com
+checkip.dyndns.org
+
+# Security services (never report our own lookups)
+virustotal.com
+abuse.ch
+tria.ge
+abuseipdb.com
+urlscan.io
+
+# Public DNS resolvers
+8.8.8.8
+8.8.4.4
+1.1.1.1
+1.0.0.1
+9.9.9.9
+149.112.112.112
+208.67.222.222
+208.67.220.220

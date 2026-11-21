@@ -103,7 +103,7 @@ VMware Workstation上のWindows VMをvmrun CLIで操作し、Windows PEマルウ
 Android SDK エミュレータ上でAPKマルウェアの動的解析を実行。Frida serverによるランタイムフック（DEXダンプ、API監視）、CDP（Chrome DevTools Protocol）によるWebViewインスペクション、logcat/ネットワーク監視に対応。NMMPパッカー等で保護されたAPKのランタイムアンパックに対応。
 
 ### threat-intel
-18 OSINTサービス統合CLI（VirusTotal / Hybrid Analysis / Triage / MalwareBazaar / ThreatFox / OTX / URLHaus / URLScan.io / Shodan / AbuseIPDB / GreyNoise / IPInfo / BGPView / Whois/RDAP / NIST NVD / VulnCheck / Malpedia / Malshare）。`correlate-hash` / `correlate-ip` で複数サービス横断問合せ、IOC抽出（pdf/eml/url, SSRF防御）、MITRE ATT&CK マッピング、HTML/PDFレポート対応。
+18 OSINTサービス統合CLI（VirusTotal / Hybrid Analysis / Triage / MalwareBazaar / ThreatFox / OTX / URLHaus / URLScan.io / Shodan / AbuseIPDB / GreyNoise / IPInfo / BGPView / Whois/RDAP / NIST NVD / VulnCheck / Malpedia / Malshare）。`correlate-hash` / `correlate-ip` で複数サービス横断問合せ、IOC抽出（pdf/eml/url, SSRF防御）、MITRE ATT&CK マッピング、HTML/PDFレポート対応。`submit` で IOC/検体を ThreatFox / URLhaus / AbuseIPDB / MalwareBazaar / VirusTotal / Triage へ公開投稿（plan → 人間承認 → run。承認は hook で Claude 実行不可、検体はコンテナ内復号）。
 
 ## Analysis Workflow
 
@@ -114,6 +114,7 @@ Android SDK エミュレータ上でAPKマルウェアの動的解析を実行�
 3. パック済み or 静的解析限界 → malware-sandbox で動的解析
 4. アンパック後バイナリ → ghidra-headless で再解析
 5. 平行: threat-intel で hash/IP/URL/CVE を相関問合せ → 帰属判定
+6. 自分で収集した OSINT 検体なら: *.iocs.yaml を作成 → threat-intel submit plan → ユーザ承認 → run
 ```
 
 ### Android APK マルウェア

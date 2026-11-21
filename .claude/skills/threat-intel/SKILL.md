@@ -1,8 +1,8 @@
 ---
 name: threat-intel
 description: |
-  Smart unified OSINT / threat-intelligence CLI over 18 services (VT, Hybrid Analysis, Triage, MalwareBazaar, ThreatFox, OTX, URLHaus, URLScan.io, Shodan, AbuseIPDB, GreyNoise, IPInfo, BGPView, Whois/RDAP, NIST NVD, VulnCheck, Malpedia, Malshare). Auto-detects input type — give it a hash/IP/URL/CVE/domain/file and it picks the right workflow. IOC extraction (txt/pdf/eml/url with SSRF defense), MITRE ATT&CK mapping, YARA scan, HTML/PDF reports.
-  Use when: 脅威インテリ問合せ, OSINT, ハッシュ調査, IP評判, CVE調査, KEV確認, IOC抽出, ATT&CK mapping, hash相関, IP相関, threat-intel, ti
+  Smart unified OSINT / threat-intelligence CLI over 18 services (VT, Hybrid Analysis, Triage, MalwareBazaar, ThreatFox, OTX, URLHaus, URLScan.io, Shodan, AbuseIPDB, GreyNoise, IPInfo, BGPView, Whois/RDAP, NIST NVD, VulnCheck, Malpedia, Malshare). Auto-detects input type — give it a hash/IP/URL/CVE/domain/file and it picks the right workflow. IOC extraction (txt/pdf/eml/url with SSRF defense), MITRE ATT&CK mapping, YARA scan, HTML/PDF reports. Human-gated public submission of IOCs/samples (ThreatFox / URLhaus / AbuseIPDB / MalwareBazaar / VirusTotal / Triage) from a per-report IOC manifest.
+  Use when: 脅威インテリ問合せ, OSINT, ハッシュ調査, IP評判, CVE調査, KEV確認, IOC抽出, ATT&CK mapping, hash相関, IP相関, threat-intel, ti, IOC投稿, IOC共有, ThreatFox投稿, URLhaus投稿, AbuseIPDB報告, MalwareBazaarアップロード, VTアップロード, Triage投稿, submit IOCs
   Do NOT use for: 静的解析（ghidra-headless）、動的解析（malware-sandbox）、危険サイト閲覧（malware-fetch）
 instructions: |
   **The single command you need to remember:**
@@ -24,7 +24,7 @@ instructions: |
   | hash (md5/sha1/sha256) | `correlate-hash` (VT + Bazaar + OTX + URLHaus + HA + Triage のうち **キー設定済みのものだけ** 一斉。**Malshare / Malpedia / ThreatFox は相関の構成外**なので、必要なら個別に叩く) |
   | IP | `correlate-ip` (**BGPView + IPInfo は常時実行**、VT + OTX + Shodan + AbuseIPDB + GreyNoise は **キー設定済みのみ**) |
   | `CVE-YYYY-NNNNN` | NIST NVD lookup + VulnCheck KEV/MITRE/NVD2 search |
-  | URL (`http://...`) | URLScan.io submit + VirusTotal URL lookup |
+  | URL (`http://...`) | URLScan.io submit（既定 `unlisted`。`URLSCANIO_VISIBILITY=public` で公開）+ VirusTotal URL lookup |
   | domain | Whois + URLScan domain search + VT domain + OTX domain |
   | file (txt/pdf/eml/md 等のテキスト) | IOC抽出 (SSRF防御済)。**拡張子は問わない** — テキストとして読めれば通る |
   | URL (`http(s)://...` を ioc コマンドで指定) | URL から IOC 抽出 |
@@ -260,6 +260,22 @@ instructions: |
 
   例: `intel-cli.py --output-format json correlate-hash <h> > result.json`
 
+  ## IOC / 検体の公開投稿（`submit`、人間承認ゲート付き）
+
+  投稿は**公開・取り消し不可**。必ず `references/ioc-submission.md` を読んでから扱う。
+  ```
+  python tools/threat-intel/intel-cli.py submit plan reports/campaigns/<name>.iocs.yaml   # dry-run（何も送らない）
+  ! python tools/threat-intel/intel-cli.py submit approve <plan_id>                       # ← 人間だけが実行する
+  python tools/threat-intel/intel-cli.py submit run <plan_id>                             # 承認済みペイロードを送信
+  python tools/threat-intel/intel-cli.py submit show <plan_id> | submit ledger
+  ```
+  - **Claude は approve を実行しない。承認ファイルも書かない。** hook（`.claude/hooks/guard_submit_approve.py`）がブロックする。
+    plan の結果をユーザに見せ、`!` 付きで approve を実行してもらう。ブロックされても回避策を探さない。
+  - 投稿してよいのは、ユーザが自分で集めた OSINT 検体（`tlp: clear` + `source: osint`）だけ。仕事や顧客由来のものは投稿しない。
+  - 検体は Docker（`ti-sample-uploader`）内で復号してから送る。ホストに平文は出さない。
+  - フィッシング LP の URL / ドメインは URLhaus・ThreatFox の受付対象外なので `MANUAL` 行になる（ブラウザでの通報は後続フェーズ）。
+  - 結果が `UNCERTAIN` だった場合は再実行せず、リンク先で登録されたかを確認する。
+
   ## .env (リポジトリルート)
 
   既存の `VIRUSTOTAL_API_KEY`, `ABUSECH_AUTH_KEY` に加えて、以下追加可能（任意）:
@@ -292,5 +308,6 @@ instructions: |
   - **Claude Code が読める** — `--output-format json` で構造化出力。エラーも JSON で返るのでパイプライン化容易
 references:
   - references/api-keys-guide.md
+  - references/ioc-submission.md
 license: GPL-3.0-or-later
 ---
